@@ -97,11 +97,26 @@ def test_x64_enabled_by_default(clean_env):
 
 
 AUTOTUNE_OFF = "--xla_gpu_autotune_level=0"
+TRITON_OFF = "--xla_gpu_enable_triton_gemm=false"
 
 
 def test_autotune_disabled_by_default(clean_env):
     reload_wrapper()
-    assert AUTOTUNE_OFF in os.environ["XLA_FLAGS"]
+    flags = os.environ["XLA_FLAGS"]
+    assert AUTOTUNE_OFF in flags
+    # With autotuning off, XLA would otherwise emit an un-tuned Triton kernel
+    # for dense float64 GEMMs (~5x slower than cuBLAS on an A100).
+    assert TRITON_OFF in flags
+
+
+def test_triton_gemm_preset_respected(clean_env):
+    clean_env.setenv("XLA_FLAGS", "--xla_gpu_enable_triton_gemm=true")
+    reload_wrapper()
+    flags = os.environ["XLA_FLAGS"]
+    assert AUTOTUNE_OFF in flags
+    assert "--xla_gpu_enable_triton_gemm=true" in flags
+    assert TRITON_OFF not in flags
+    assert flags.count("--xla_gpu_enable_triton_gemm") == 1
 
 
 def test_autotune_preset_level_respected(clean_env):
@@ -111,6 +126,8 @@ def test_autotune_preset_level_respected(clean_env):
     assert "--xla_gpu_autotune_level=3" in flags
     assert AUTOTUNE_OFF not in flags
     assert CONSTANT_FOLDING in flags
+    # An explicit level means XLA's own Triton GEMM behaviour is left alone.
+    assert TRITON_OFF not in flags
 
 
 def test_autotune_composes_with_user_flags(clean_env):
@@ -120,3 +137,4 @@ def test_autotune_composes_with_user_flags(clean_env):
     assert "--xla_dump_to=/tmp/foo" in flags
     assert CONSTANT_FOLDING in flags
     assert AUTOTUNE_OFF in flags
+    assert TRITON_OFF in flags

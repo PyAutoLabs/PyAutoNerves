@@ -48,8 +48,8 @@ if not xla_env_set:
 
     # Append rather than overwrite: replacing the value silently discarded any
     # flags the user or a batch script had set (e.g. --xla_dump_to=...,
-    # --xla_gpu_autotune_level=0), which is indistinguishable from those flags
-    # having no effect.
+    # --xla_gpu_autotune_level=0, --xla_gpu_enable_triton_gemm=false), which is
+    # indistinguishable from those flags having no effect.
     if xla_env:
         os.environ["XLA_FLAGS"] = f"{xla_env} --xla_disable_hlo_passes=constant_folding"
     else:
@@ -61,16 +61,27 @@ if "--xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
         f"{os.environ['XLA_FLAGS']} --xla_gpu_autotune_level=0"
     )
 
+    if "--xla_gpu_enable_triton_gemm" not in os.environ["XLA_FLAGS"]:
+        os.environ["XLA_FLAGS"] = (
+            f"{os.environ['XLA_FLAGS']} --xla_gpu_enable_triton_gemm=false"
+        )
+
     logger.info(
         """
         XLA GPU autotuning has been disabled by default (--xla_gpu_autotune_level=0):
         it dominates cold JAX compile times on GPU (measured up to ~7 minutes for a
-        single fusion) while giving no measurable evaluation speed-up on PyAuto
-        likelihoods.
+        single fusion on an A100, autolens_profiling jax_compile finding 6). Because
+        with autotuning off XLA otherwise lowers dense float64 matrix products to an
+        un-tuned Triton kernel that is ~5x slower than cuBLAS (curvature matrix
+        25.5 ms vs 4.8 ms on an A100, autolens_profiling job 342333), Triton GEMM
+        emission is also disabled (--xla_gpu_enable_triton_gemm=false) so those
+        products go to cuBLAS.
 
-        To re-enable autotuning, include an explicit --xla_gpu_autotune_level=<n>
-        in the XLA_FLAGS environment variable before running your script — a
-        pre-set level is always respected.
+        To change either, include an explicit --xla_gpu_autotune_level=<n> and/or
+        --xla_gpu_enable_triton_gemm=<true|false> in the XLA_FLAGS environment
+        variable before running your script — pre-set flags are always respected,
+        and with an explicit autotune level Triton GEMM is left to XLA (it is
+        autotuned against cuBLAS there).
         """
     )
 
