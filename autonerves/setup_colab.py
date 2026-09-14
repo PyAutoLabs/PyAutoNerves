@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 _XLA_FLAGS = "--xla_disable_hlo_passes=constant_folding"
 
 # Notebook / runtime extras installed alongside every project's core stack.
+#
+# The install below is `--no-deps`, so anything a PyAuto package declares as a
+# dependency but Colab does not already ship has to be named here or it never
+# lands. `emcee` and `dynesty` are real `autofit` dependencies driving the
+# `af.Emcee` and `af.DynestyStatic` searches (PyAutoFit/pyproject.toml), and
+# without them every Colab notebook that runs a search dies with
+# `ModuleNotFoundError` at the fit; their specifiers track that file.
 _SHARED_EXTRAS = [
     "pyvis==0.3.2",
     "dill==0.4.0",
@@ -34,6 +41,8 @@ _SHARED_EXTRAS = [
     "nautilus-sampler==1.0.4",
     "timeout_decorator==0.5.0",
     "anesthetic==2.8.14",
+    "emcee>=3.1.6",
+    "dynesty==2.1.5",
 ]
 
 _AUTOFIT_STACK = ["autonerves", "autofit"]
