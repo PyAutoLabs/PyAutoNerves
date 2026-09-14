@@ -1,4 +1,5 @@
 import logging
+import re
 import subprocess
 import sys
 import types
@@ -88,6 +89,20 @@ class TestRegistry:
             assert spec["workspace_repo"].startswith(
                 "https://github.com/PyAutoLabs/"
             ), project
+
+    def test_every_project_installs_every_sampler(self):
+        # Regression: `--no-deps` means a sampler absent from the install list
+        # never lands, and the notebook cell constructing that search dies with
+        # ModuleNotFoundError at fit time (HowToFit chapter 1 tutorials 4, 5
+        # and 6 on Colab). Match on the package name only, so a future re-pin
+        # of any of them does not break this test.
+        required = {"dynesty", "emcee", "nautilus-sampler"}
+        for project, spec in setup_colab._PROJECTS.items():
+            names = {
+                re.split(r"[<>=!~\[]", package, maxsplit=1)[0].strip()
+                for package in spec["packages"]
+            }
+            assert required <= names, (project, sorted(names))
 
     def test_every_project_has_a_wrapper(self):
         for project in setup_colab._PROJECTS:
