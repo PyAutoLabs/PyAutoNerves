@@ -34,15 +34,36 @@ _XLA_FLAGS = "--xla_disable_hlo_passes=constant_folding"
 # `af.Emcee` and `af.DynestyStatic` searches (PyAutoFit/pyproject.toml), and
 # without them every Colab notebook that runs a search dies with
 # `ModuleNotFoundError` at the fit; their specifiers track that file.
+#
+# The entries that get missed are the ones imported lazily. A dependency
+# imported inside a function rather than at module scope leaves `import
+# autofit` working and the search running to completion, and only detonates on
+# the line that finally reaches it — `corner` is imported inside
+# `corner_cornerpy` (autofit/non_linear/plot/samples_plotters.py), so nothing
+# fails until the post-fit plot. The workspace smoke gate cannot see these
+# either: it runs at `PYAUTO_TEST_MODE=2` and never constructs the sampler, so
+# the import is never reached there.
 _SHARED_EXTRAS = [
     "pyvis==0.3.2",
     "dill==0.4.0",
     "jaxnnls",
-    "nautilus-sampler==1.0.4",
+    "nautilus-sampler==1.0.5",  # was ==1.0.4; drifted from autofit's `optional` extra
     "timeout_decorator==0.5.0",
-    "anesthetic==2.8.14",
+    "anesthetic>=2.9.0",  # was ==2.8.14; pinned below autofit's declared floor
     "emcee>=3.1.6",
     "dynesty==2.1.5",
+    "corner==2.2.2",  # lazy import in `corner_cornerpy`; the reported failure
+    # `optax` is declared in autofit behind an environment marker
+    # (`sys_platform != "darwin" or platform_machine == "arm64"`), because
+    # Intel macOS has no jax wheels. Colab is always linux, so the entry here
+    # is deliberately unmarked.
+    "optax>=0.2.5",
+    # An upper bound, not a floor: if Colab ships a newer `xxhash` this entry
+    # downgrades it. That matches autofit's own constraint so it is intended,
+    # but it is the only entry here that changes an already-working Colab
+    # package rather than adding a missing one.
+    "xxhash<=3.4.1",
+    "blackjax>=1.6.2",
 ]
 
 _AUTOFIT_STACK = ["autonerves", "autofit"]
