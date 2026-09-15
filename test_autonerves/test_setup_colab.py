@@ -2,12 +2,46 @@ import logging
 import re
 import subprocess
 import sys
+import tomllib
 import types
+from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from autonerves import setup_colab
+
+
+def _normalise(name):
+    """
+    PEP 503 name normalisation. ``_SHARED_EXTRAS`` spells one entry
+    ``timeout_decorator`` while autofit declares ``timeout-decorator``; without
+    this the two would compare as different packages and read as a drift.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _split_requirement(requirement):
+    """
+    Split a requirement string into ``(normalised name, specifier)``.
+
+    The environment marker is dropped: autofit declares ``optax`` as
+    ``optax>=0.2.5; sys_platform != "darwin" or ...`` and the Colab entry is
+    deliberately unmarked, so comparing the raw strings would fail spuriously.
+    Any extras bracket is dropped with it.
+    """
+    requirement = requirement.split(";", maxsplit=1)[0].strip()
+    requirement = re.sub(r"\[[^\]]*\]", "", requirement)
+
+    match = re.search(r"[<>=!~]", requirement)
+
+    if match is None:
+        return _normalise(requirement), ""
+
+    return (
+        _normalise(requirement[: match.start()]),
+        requirement[match.start():].strip(),
+    )
 
 
 @pytest.fixture(name="no_ipython")
@@ -91,12 +125,24 @@ class TestRegistry:
             ), project
 
     def test_every_project_installs_every_sampler(self):
-        # Regression: `--no-deps` means a sampler absent from the install list
-        # never lands, and the notebook cell constructing that search dies with
-        # ModuleNotFoundError at fit time (HowToFit chapter 1 tutorials 4, 5
-        # and 6 on Colab). Match on the package name only, so a future re-pin
-        # of any of them does not break this test.
-        required = {"dynesty", "emcee", "nautilus-sampler"}
+        # Regression: `--no-deps` means a dependency absent from the install
+        # list never lands, and the notebook cell that reaches it dies with
+        # ModuleNotFoundError (HowToFit chapter 1 tutorials 4, 5 and 6 on
+        # Colab). Widened past the samplers to every autofit dependency that is
+        # imported lazily, inside a function, and so survives `import autofit`:
+        # `corner` (the reported failure), `optax`, `xxhash` and `blackjax`.
+        # Match on the package name only, so a future re-pin of any of them
+        # does not break this test — drift is `TestSpecifiersTrackAutofit`'s
+        # job, this one guards the "missing entirely" class.
+        required = {
+            "dynesty",
+            "emcee",
+            "nautilus-sampler",
+            "corner",
+            "optax",
+            "xxhash",
+            "blackjax",
+        }
         for project, spec in setup_colab._PROJECTS.items():
             names = {
                 re.split(r"[<>=!~\[]", package, maxsplit=1)[0].strip()
@@ -111,6 +157,102 @@ class TestRegistry:
     def test_unknown_project_raises_with_choices(self):
         with pytest.raises(KeyError, match="autogalaxy"):
             setup_colab.setup("not_a_project")
+
+
+# An exact pin, e.g. `==1.0.5`. Deliberately does not match `===1.0.5`
+# (arbitrary equality) or a wildcard pin like `==1.0.*`, neither of which names
+# a single version that can be tested against a range; both fall through to the
+# string-equality arm below.
+_EXACT_PIN = re.compile(r"==(?!=)\s*([^,\s*]+)$")
+
+
+class TestSpecifiersTrackAutofit:
+    def test_shared_extras_match_autofits_declared_specifiers(self):
+        """
+        Every `_SHARED_EXTRAS` entry autofit also declares must agree with
+        autofit's specifier, under a deliberately ASYMMETRIC rule:
+
+        - An EXACT pin (`==X`) need only be COMPATIBLE: `X` must satisfy
+          autofit's declared specifier. This lets a deliberate narrowing stand.
+          The worked example is `dill`: the Colab list pins `dill==0.4.0` while
+          autofit declares the floor `dill>=0.3.1.1`. 0.4.0 satisfies that
+          floor, so it is a narrowing and not a drift, and it passes.
+        - Anything that is NOT an exact pin (a range: `optax>=0.2.5`,
+          `xxhash<=3.4.1`) must match autofit's specifier as an exact STRING.
+          Merely overlapping autofit's range is not enough — for these the list
+          is meant to MIRROR the file, and a looser-but-overlapping range is
+          exactly how it would quietly drift away from it.
+
+        Do not "simplify" this back to plain string equality on both arms: that
+        is what `dill` fails, and it fails for no good reason.
+
+        The expectations are DERIVED from PyAutoFit's pyproject.toml at run
+        time, never restated here. Two entries had already drifted from the
+        file the list's own comment claims to track (`nautilus-sampler` a patch
+        behind autofit's pin, `anesthetic` pinned BELOW autofit's floor)
+        precisely because the list repeats literals nobody re-checks. Copying
+        those literals into this test would reproduce that failure mode one
+        layer up — the test would go stale alongside the list it guards.
+        """
+        try:
+            from packaging.specifiers import SpecifierSet
+        except ImportError:  # pragma: no cover - `packaging` ships with pip
+            pytest.skip("`packaging` is not importable, so specifiers cannot be compared")
+
+        pyproject = Path(__file__).parents[2] / "PyAutoFit" / "pyproject.toml"
+
+        if not pyproject.is_file():
+            # PyAutoNerves CI may run with no sibling PyAutoFit checkout; there
+            # is nothing to compare against, and that is not a failure.
+            pytest.skip(
+                f"no sibling PyAutoFit checkout at {pyproject} to read "
+                "declared specifiers from"
+            )
+
+        with open(pyproject, "rb") as f:
+            project = tomllib.load(f)["project"]
+
+        # `blackjax` and `nautilus-sampler` are declared in the `optional`
+        # extra rather than the base dependencies.
+        declared = dict(
+            _split_requirement(requirement)
+            for requirement in (
+                project["dependencies"]
+                + project["optional-dependencies"]["optional"]
+            )
+        )
+
+        mismatched = {}
+
+        for entry in setup_colab._SHARED_EXTRAS:
+            name, specifier = _split_requirement(entry)
+
+            if name not in declared:
+                # Not an autofit dependency at all (`jaxnnls`), so there is no
+                # declared specifier for it to track.
+                continue
+
+            autofit_specifier = declared[name]
+            pin = _EXACT_PIN.fullmatch(specifier)
+
+            if pin is not None:
+                # `prereleases=True` so a prerelease pin is not reported as
+                # non-satisfying merely for being a prerelease.
+                ok = SpecifierSet(autofit_specifier).contains(
+                    pin.group(1), prereleases=True
+                )
+            else:
+                # Covers the unpinned case too: an entry autofit declares but
+                # the Colab list leaves bare is a mismatch, not a free pass.
+                ok = specifier == autofit_specifier
+
+            if not ok:
+                mismatched[name] = {
+                    "setup_colab": specifier or "(unpinned)",
+                    "autofit": autofit_specifier,
+                }
+
+        assert not mismatched, mismatched
 
 
 class TestNoImportSideEffects:
