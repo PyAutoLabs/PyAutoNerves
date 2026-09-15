@@ -34,15 +34,24 @@ _XLA_FLAGS = "--xla_disable_hlo_passes=constant_folding"
 # `af.Emcee` and `af.DynestyStatic` searches (PyAutoFit/pyproject.toml), and
 # without them every Colab notebook that runs a search dies with
 # `ModuleNotFoundError` at the fit; their specifiers track that file.
+#
+# `blackjax` and `nautilus-sampler` are the same case, one tier down: they sit
+# in PyAutoFit's `optional` extra rather than its base dependencies, so nothing
+# in the `--no-deps` install above reaches them. HowToFit chapter 1 tutorials 6
+# and 7 both construct `af.BlackJAXNUTS`, and tutorial 6 also `af.Nautilus`;
+# measured 2026-09-15 on HowToFit main, both tutorials died with
+# `ModuleNotFoundError: No module named 'blackjax'` at real sampling while
+# passing CI, which runs PYAUTO_TEST_MODE=2 and never constructs the search.
 _SHARED_EXTRAS = [
     "pyvis==0.3.2",
     "dill==0.4.0",
     "jaxnnls",
-    "nautilus-sampler==1.0.4",
+    "nautilus-sampler==1.0.5",
     "timeout_decorator==0.5.0",
     "anesthetic==2.8.14",
     "emcee>=3.1.6",
     "dynesty==2.1.5",
+    "blackjax>=1.6.2",
 ]
 
 _AUTOFIT_STACK = ["autonerves", "autofit"]

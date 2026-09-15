@@ -96,7 +96,14 @@ class TestRegistry:
         # ModuleNotFoundError at fit time (HowToFit chapter 1 tutorials 4, 5
         # and 6 on Colab). Match on the package name only, so a future re-pin
         # of any of them does not break this test.
-        required = {"dynesty", "emcee", "nautilus-sampler"}
+        #
+        # `blackjax` joined the set on 2026-09-15: it was missing here, and
+        # HowToFit chapter 1 tutorials 6 and 7 both died with
+        # `ModuleNotFoundError: No module named 'blackjax'` at their
+        # `af.BlackJAXNUTS` fit. This test is the guard that should have caught
+        # it — the required set has to name every search the notebooks
+        # construct, not just the ones that broke last time.
+        required = {"dynesty", "emcee", "nautilus-sampler", "blackjax"}
         for project, spec in setup_colab._PROJECTS.items():
             names = {
                 re.split(r"[<>=!~\[]", package, maxsplit=1)[0].strip()
