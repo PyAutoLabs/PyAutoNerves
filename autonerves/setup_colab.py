@@ -64,6 +64,14 @@ _SHARED_EXTRAS = [
     # package rather than adding a missing one.
     "xxhash<=3.4.1",
     "blackjax>=1.6.2",
+    # `jax_zero_contour` is an autogalaxy BASE dependency, reached by the
+    # critical-curve code in `autogalaxy/operate/lens_calc.py`. Declared behind
+    # the same marker as `optax` above, dropped here for the same reason.
+    "jax_zero_contour>=2.0.0,<3.0.0",
+    # `zeus` is imported inside the `af.Zeus` search, which the autofit
+    # workspace notebooks run (cookbooks/search, searches/mcmc, the zeus
+    # plotter); the distribution is `zeus-mcmc`, autofit's `optional` extra.
+    "zeus-mcmc==2.5.4",
 ]
 
 _AUTOFIT_STACK = ["autonerves", "autofit"]
