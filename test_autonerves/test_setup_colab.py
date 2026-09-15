@@ -130,10 +130,12 @@ class TestRegistry:
         # ModuleNotFoundError (HowToFit chapter 1 tutorials 4, 5 and 6 on
         # Colab). Widened past the samplers to every autofit dependency that is
         # imported lazily, inside a function, and so survives `import autofit`:
-        # `corner` (the reported failure), `optax`, `xxhash` and `blackjax`.
-        # Match on the package name only, so a future re-pin of any of them
-        # does not break this test — drift is `TestSpecifiersTrackAutofit`'s
-        # job, this one guards the "missing entirely" class.
+        # `corner` (the reported failure), `optax`, `xxhash`, `blackjax`,
+        # `jax_zero_contour` (autogalaxy's critical-curve code) and
+        # `zeus-mcmc` (`af.Zeus`). Match on the package name only, so a future
+        # re-pin of any of them does not break this test — drift is
+        # `TestSpecifiersTrackAutofit`'s job, this one guards the "missing
+        # entirely" class.
         required = {
             "dynesty",
             "emcee",
@@ -142,6 +144,8 @@ class TestRegistry:
             "optax",
             "xxhash",
             "blackjax",
+            "jax_zero_contour",
+            "zeus-mcmc",
         }
         for project, spec in setup_colab._PROJECTS.items():
             names = {
@@ -186,8 +190,8 @@ class TestSpecifiersTrackAutofit:
         Do not "simplify" this back to plain string equality on both arms: that
         is what `dill` fails, and it fails for no good reason.
 
-        The expectations are DERIVED from PyAutoFit's pyproject.toml at run
-        time, never restated here. Two entries had already drifted from the
+        The expectations are DERIVED from PyAutoFit's and PyAutoGalaxy's
+        pyproject.toml at run time, never restated here. Two entries had already drifted from the
         file the list's own comment claims to track (`nautilus-sampler` a patch
         behind autofit's pin, `anesthetic` pinned BELOW autofit's floor)
         precisely because the list repeats literals nobody re-checks. Copying
@@ -199,26 +203,46 @@ class TestSpecifiersTrackAutofit:
         except ImportError:  # pragma: no cover - `packaging` ships with pip
             pytest.skip("`packaging` is not importable, so specifiers cannot be compared")
 
-        pyproject = Path(__file__).parents[2] / "PyAutoFit" / "pyproject.toml"
+        siblings = Path(__file__).parents[2]
+        pyprojects = {
+            name: siblings / name / "pyproject.toml"
+            for name in ("PyAutoFit", "PyAutoGalaxy")
+        }
 
-        if not pyproject.is_file():
-            # PyAutoNerves CI may run with no sibling PyAutoFit checkout; there
+        missing = sorted(
+            str(path) for path in pyprojects.values() if not path.is_file()
+        )
+
+        if missing:
+            # PyAutoNerves CI may run with no sibling library checkouts; there
             # is nothing to compare against, and that is not a failure.
             pytest.skip(
-                f"no sibling PyAutoFit checkout at {pyproject} to read "
+                f"no sibling checkout at {', '.join(missing)} to read "
                 "declared specifiers from"
             )
 
-        with open(pyproject, "rb") as f:
-            project = tomllib.load(f)["project"]
+        projects = {}
+        for name, path in pyprojects.items():
+            with open(path, "rb") as f:
+                projects[name] = tomllib.load(f)["project"]
 
-        # `blackjax` and `nautilus-sampler` are declared in the `optional`
-        # extra rather than the base dependencies.
+        def requirements(project):
+            # `blackjax`, `nautilus-sampler` and `zeus-mcmc` are declared in
+            # the `optional` extra rather than the base dependencies.
+            return project["dependencies"] + project["optional-dependencies"][
+                "optional"
+            ]
+
+        # PyAutoGalaxy first, then PyAutoFit over the top: where both declare a
+        # name, autofit's specifier is the one this test has always compared
+        # against, and it stays the authority. PyAutoGalaxy is read because
+        # `jax_zero_contour` is a base dependency of THAT file, not autofit's,
+        # and the Colab list has to track it just as closely.
         declared = dict(
             _split_requirement(requirement)
             for requirement in (
-                project["dependencies"]
-                + project["optional-dependencies"]["optional"]
+                requirements(projects["PyAutoGalaxy"])
+                + requirements(projects["PyAutoFit"])
             )
         )
 

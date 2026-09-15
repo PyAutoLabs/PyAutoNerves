@@ -1,0 +1,88 @@
+# Runs PyAutoHeart's Colab gate (verify_install check F) against THIS branch's
+# setup_colab.py: a venv holding the package set Google actually ships, the
+# injected setup cell's real `--no-deps` bootstrap, then an audit of every
+# import and declared dependency that bootstrap left unmet. So a _SHARED_EXTRAS
+# change is proven against Google's manifest before it merges — the PR-time
+# complement of the release-time verify_install_release job in PyAutoHeart.
+name: Colab gate
+
+on:
+  pull_request:
+    paths:
+      - autonerves/setup_colab.py
+      - .github/workflows/colab-gate.yml
+  workflow_dispatch:
+
+# A push to the PR supersedes the run before it: the gate is a ~15 minute
+# network-bound job and only the tip commit's verdict is wanted.
+concurrency:
+  group: colab-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  colab-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Unshallow: setuptools-scm reads the tags to version the overlay wheel.
+      - name: Checkout PyAutoNerves
+        uses: actions/checkout@v4
+        with:
+          path: PyAutoNerves
+          fetch-depth: 0
+      # The gate itself lives in Heart, which owns all readiness checking.
+      # Pinned to main: a PR here is gated by the gate as it currently ships.
+      - name: Checkout PyAutoHeart (the gate)
+        uses: actions/checkout@v4
+        with:
+          repository: PyAutoLabs/PyAutoHeart
+          ref: main
+          path: PyAutoHeart
+      # Colab runs Python 3.12 and check F invokes the `python3.12` binary by
+      # name — a different interpreter would seed Colab's pins against the
+      # wrong wheels, so the check FAILs rather than SKIPs when it is absent.
+      - name: Set up Python 3.12 (the interpreter Colab runs)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Confirm python3.12 resolves by name
+        run: python3.12 --version
+      # COLAB_GATE_AUTONERVES_SRC overlays this checkout's setup_colab.py on
+      # top of the released `autonerves` the setup cell bootstraps. Heart's own
+      # release run must NEVER set it (a release gate reads the wheels about to
+      # ship); here the unreleased file IS the thing under test.
+      - name: Run the Colab gate (check F) against this branch's setup_colab
+        env:
+          COLAB_GATE_AUTONERVES_SRC: ${{ github.workspace }}/PyAutoNerves
+          HEART_STATE_DIR: ${{ runner.temp }}/heart-state
+        run: |
+          bash PyAutoHeart/heart/checks/verify_install.sh F \
+            --report-json "$RUNNER_TEMP/verify_install.json"
+      - name: Upload the gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: colab-gate-report
+          path: ${{ runner.temp }}/verify_install.json
+          retention-days: 30
+      # verify_install already exits non-zero on a failed check, so the step
+      # above is the gate. This re-reads the verdict the sidecar recorded, so a
+      # report that says `ready: false` can never ride through on a zero exit.
+      - name: Fail on a non-ready report
+        if: always()
+        run: |
+          python3 - "$RUNNER_TEMP/verify_install.json" <<'PY'
+          import json, sys
+
+          with open(sys.argv[1]) as handle:
+              report = json.load(handle)
+
+          for check in report["checks"]:
+              print(f"{check['check']}|{check['status']}|{check['detail']}")
+
+          if not report["ready"]:
+              sys.exit("Colab gate not ready — see the RESULTS rows above")
+          PY
