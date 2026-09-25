@@ -27,6 +27,7 @@ Canonical boundaries live in `PyAutoBrain/ORGANISM.md`; the full body map
 | **Hands** | PyAutoHands | Packaging, tagging, notebook generation, PyPI release execution. |
 | **Nerves** | PyAutoNerves | The Nerves — the configuration/serialization layer connecting workspace conventions to libraries (layered config, version handshake, test_mode), delivered as the `autonerves` package. |
 | **Gut** | PyAutoGut | Owns the lifecycle of condemned self-material (stale branches, stashes, dead code/tests): holds it as durable, recoverable git refs through a transit window and voids it on a sweep. The storage mirror of Memory (retention vs release). |
+| **Eyes** | PyAutoEyes | The Eyes — where the organism sees what its figures look like: one rendered gallery per library (lens, galaxy, fit, cti) of every visualizer output on realistic data, the harness that renders them, the instance registry and the board that is the single point of contact for the visual behaviour of the whole ecosystem. Renders and holds figures; never judges them (the Brain's Eyes conductor does) and never edits library plot code (critiques route through intake). |
 
 Call chain (always this order): **Brain → Heart (gate) → Build (execute)**. Brain agents are **conductors** (front-door; a human drives them; they decide *and* act) or **faculties** (read-only opinions the conductors consult; they judge and stop). New capability grows as a faculty, not a new organ, unless it owns state or effects no existing organ can.
 
