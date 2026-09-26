@@ -1,0 +1,132 @@
+name: Nerves Board
+
+# Publishes the PyAutoNerves Board — every config file and option across the
+# library and workspace config folders — from one renderer (scripts/board.py,
+# the Gut-board shape):
+#   * index.html — sources overview, the override map, the PYAUTO_* env-var
+#     panel and a search box over every key, file and comment,
+#   * repos/<Repo>.html — one page per source: each file's keys, its source
+#     (comments preserved, line-numbered) and a GitHub link; priors as tables,
+#   * badge.json (the shields endpoint), board.json (the full snapshot),
+#   * state.json (the organ-cockpit feed — contract v1, owned by
+#     PyAutoBrain board/_state.py and validated below),
+#   * dashboard.md (the markdown mirror).
+#
+# Read-only: the board edits nothing. Truth is a sparse checkout of each
+# source's config folder (blobless clone, only `<config dir>/**` checked out)
+# taken fresh on every run; slugs come from the Mind's body map.
+
+on:
+  schedule:
+    - cron: "55 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: nerves-board-pages
+  cancel-in-progress: false
+
+jobs:
+  board:
+    name: Render + publish the board
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The family look (theme) and the cockpit contract live in the Brain;
+      # the body map (repos.yaml: each source's GitHub slug) in the Mind.
+      - uses: actions/checkout@v4
+        with:
+          repository: PyAutoLabs/PyAutoBrain
+          path: PyAutoBrain
+
+      - uses: actions/checkout@v4
+        with:
+          repository: PyAutoLabs/PyAutoMind
+          path: PyAutoMind
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      # The source list is the renderer's own SOURCES table, so the workflow
+      # and the board can never disagree about what is collected. A source
+      # that fails to clone is simply absent — the board reports it under
+      # "unavailable this render" rather than pretending it was read.
+      - name: Sparse-clone every config folder
+        run: |
+          python3 - <<'PY'
+          import importlib.util, subprocess, yaml
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("board", "scripts/board.py")
+          board = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(board)
+          repos = yaml.safe_load(Path("PyAutoMind/repos.yaml").read_text())["repos"]
+          for src in board.SOURCES:
+              name, cfg = src["repo"], src["config"]
+              home = (repos.get(name) or {}).get("github")
+              if not home:
+                  print(f"::warning::{name}: no github slug in repos.yaml")
+                  continue
+              dest = Path("sources") / name
+              try:
+                  subprocess.run(["git", "clone", "--quiet", "--depth", "1",
+                                  "--filter=blob:none", "--no-checkout",
+                                  f"https://github.com/{home}", str(dest)],
+                                 check=True, timeout=300)
+                  subprocess.run(["git", "-C", str(dest), "sparse-checkout",
+                                  "set", "--no-cone", f"{cfg}/**"],
+                                 check=True, timeout=60)
+                  subprocess.run(["git", "-C", str(dest), "checkout", "--quiet"],
+                                 check=True, timeout=300)
+              except (subprocess.CalledProcessError,
+                      subprocess.TimeoutExpired) as e:
+                  print(f"::warning::config checkout skipped {name}: {e}")
+          PY
+
+      - name: Collect the snapshot
+        run: |
+          python scripts/board.py --brain PyAutoBrain --mind PyAutoMind \
+            --sources sources --collect board_snapshot.json
+
+      - name: Render the site
+        run: |
+          python scripts/board.py --brain PyAutoBrain \
+            --snapshot board_snapshot.json --site _site
+
+      - name: Validate the cockpit feed against the Brain contract
+        run: |
+          # The contract is owned by the Brain (board/_state.py); the Nerves
+          # only emit it. A feed the cockpit cannot read fails loudly here.
+          python3 PyAutoBrain/board/_state.py _site/state.json
+
+      - name: Write the board to the job step summary
+        run: |
+          python scripts/board.py --brain PyAutoBrain \
+            --snapshot board_snapshot.json --md-brief >> "$GITHUB_STEP_SUMMARY"
+
+      # The Pages site is created once by a human token (the repo token cannot
+      # create it); enablement: true is kept so a re-created repo self-heals.
+      - uses: actions/configure-pages@v5
+        if: github.ref == 'refs/heads/main'
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        if: github.ref == 'refs/heads/main'

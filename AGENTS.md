@@ -67,7 +67,7 @@ on autonerves, so any public-API change here ripples downstream.
 ```bash
 pip install -e ".[dev]"              # install with dev/test extras
 python -m pytest test_autonerves/      # full test suite
-python -m pytest test_autonerves/tools/test_decorators.py   # one focused test
+python -m pytest test_autonerves/test_decorator.py       # one focused test
 black autonerves/                      # formatter (advisory — not gated)
 ```
 
@@ -76,6 +76,26 @@ writable caches:
 
 ```bash
 NUMBA_CACHE_DIR=/tmp/numba_cache MPLCONFIGDIR=/tmp/matplotlib python -m pytest test_autonerves/
+```
+
+## The Nerves board
+
+`scripts/board.py` renders the read-only Nerves board
+(<https://pyautolabs.github.io/PyAutoNerves/>): every YAML file under each
+library's `<package>/config/` and each workspace's `config/`, with keys,
+comments, source, prior tables, the workspace → library override map, the
+`PYAUTO_*` env vars, and a `state.json` cockpit feed (contract owned by
+`PyAutoBrain/board/_state.py`). The config sources are the `SOURCES` table at
+the top of the script (repo, config dir, kind, library lookup stack) — add a
+new library or workspace there. It is stdlib + PyYAML, is **not** packaged
+(`scripts/` is excluded in `pyproject.toml` / `MANIFEST.in`), and is tested by
+`test_autonerves/test_board.py`. Published by
+`.github/workflows/nerves_board.yml` (daily + dispatch). Local run:
+
+```bash
+python scripts/board.py --brain ../PyAutoBrain --root <workspace root> --collect snap.json
+python scripts/board.py --brain ../PyAutoBrain --snapshot snap.json --site /tmp/nerves_site
+python ../PyAutoBrain/board/_state.py /tmp/nerves_site/state.json   # -> state: ok
 ```
 
 ## CI / definition of green
