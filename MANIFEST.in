@@ -5,6 +5,8 @@ include README.md
 prune .git
 prune build
 prune dist
+# scripts/board.py renders the Nerves board (Pages); it is not package code.
+prune scripts
 recursive-exclude *.egg-info *
 include requirements.txt
 

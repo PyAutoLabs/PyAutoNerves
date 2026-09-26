@@ -47,7 +47,7 @@ Homepage = "https://github.com/PyAutoLabs/PyAutoNerves"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-exclude = ["docs", "test_autonerves", "test_autonerves*"]
+exclude = ["docs", "test_autonerves", "test_autonerves*", "scripts", "scripts*"]
 
 [tool.setuptools_scm]
 version_scheme = "post-release"

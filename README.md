@@ -59,6 +59,36 @@ output_to_fits(values=arr, file_path="demo.fits", overwrite=True)
 loaded = ndarray_via_fits_from(file_path="demo.fits", hdu=0)   # np.allclose(arr, loaded)
 ```
 
+## Nerves board
+
+**<https://pyautolabs.github.io/PyAutoNerves/>** — a read-only browser of every
+config file and option across the organism: each library's `<package>/config/`
+(PyAutoFit, PyAutoArray, PyAutoGalaxy, PyAutoLens, PyAutoCTI) and each
+workspace's `config/` that overrides them.
+
+- **Per repo** (`repos/<Repo>.html`): every YAML file with its top-level keys,
+  its source line-numbered with the comments kept (the comments *are* the
+  option docs) and a GitHub link; prior files render as a table
+  (Class · param · type · mean/σ or bounds · width modifier · limits).
+- **Search**: the index page's box searches every key, file and comment
+  across all repos and jumps to the line.
+- **Override map**: autonerves resolves a key workspace → last-imported
+  library → … → PyAutoFit (`Config.push(keep_first=True)`, keys lowercased),
+  so each workspace file is compared, by relative path, against the same file
+  across its library stack in that order (lens → galaxy → array → fit; cti →
+  array → fit). Keys whose value differs, keys no library defines (*orphans*)
+  and keys that fall through to the libraries are listed per file.
+  `build/*.yaml` is workspace tooling and is grouped apart.
+- **Environment variables**: the `PYAUTO_*` switches autonerves reads.
+- **Cockpit feed** (`state.json`): green when every file parses and no
+  workspace key is orphaned; yellow with one item per unparseable file or
+  orphan-carrying workspace file; grey when nothing was collected. Never red.
+
+Rendered daily by [`.github/workflows/nerves_board.yml`](.github/workflows/nerves_board.yml)
+from sparse checkouts of the config folders; the renderer is
+[`scripts/board.py`](scripts/board.py) (not part of the `autonerves` package).
+Nothing on the board edits config.
+
 ## Links
 
 - Source & tests: [`autonerves/`](autonerves), [`test_autonerves/`](test_autonerves)
