@@ -79,13 +79,31 @@ workspace's `config/` that overrides them.
   array → fit). Keys whose value differs, keys no library defines (*orphans*)
   and keys that fall through to the libraries are listed per file.
   `build/*.yaml` is workspace tooling and is grouped apart.
+- **Possibly unused config keys**: each library's Python (and autonerves'
+  own) is scanned for `conf.instance[...]` lookups, and every key of a
+  library settings file is classed *used* (a lookup reads it, or reads a key
+  under it — PyAutoLens reading a PyAutoFit key counts, since autonerves
+  merges every layer), *section-read* (a lookup reads an ancestor section
+  whole, or a non-literal subscript such as `["plots"][section][name]` ends
+  the chain above it) or *unused* (nothing references it). Unused keys get a
+  chip on the repo page, per-file counts and an index section grouped by
+  library with GitHub links. Prior files are exempt (looked up by class name).
+  **Limits:** the scan is static — it follows literal subscript chains
+  (including multi-line ones and `.get("k")`), sections bound to a local and
+  indexed later in the same function or a closure, and the `should_output`
+  helper; a key read any other way (built key strings, `getattr`, a section
+  passed to another function and indexed there) shows as section-read at
+  best and may show as unused. Treat the list as candidates, not a verdict.
 - **Environment variables**: the `PYAUTO_*` switches autonerves reads.
 - **Cockpit feed** (`state.json`): green when every file parses and no
   workspace key is orphaned; yellow with one item per unparseable file or
   orphan-carrying workspace file; grey when nothing was collected. Never red.
+  Possibly unused keys add one *info* item per library — never yellow, until
+  the scan is trusted.
 
 Rendered daily by [`.github/workflows/nerves_board.yml`](.github/workflows/nerves_board.yml)
-from sparse checkouts of the config folders; the renderer is
+from sparse checkouts of the config folders (plus each library's package
+`.py` files, for the lookup scan); the renderer is
 [`scripts/board.py`](scripts/board.py) (not part of the `autonerves` package).
 Nothing on the board edits config.
 

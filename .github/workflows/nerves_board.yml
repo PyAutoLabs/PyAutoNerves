@@ -13,8 +13,9 @@ name: Nerves Board
 #   * dashboard.md (the markdown mirror).
 #
 # Read-only: the board edits nothing. Truth is a sparse checkout of each
-# source's config folder (blobless clone, only `<config dir>/**` checked out)
-# taken fresh on every run; slugs come from the Mind's body map.
+# source's config folder (blobless clone, only `<config dir>/**` checked out;
+# for a library also `<package>/**/*.py`, scanned for the config keys its
+# code reads) taken fresh on every run; slugs come from the Mind's body map.
 
 on:
   schedule:
@@ -63,7 +64,7 @@ jobs:
       # and the board can never disagree about what is collected. A source
       # that fails to clone is simply absent — the board reports it under
       # "unavailable this render" rather than pretending it was read.
-      - name: Sparse-clone every config folder
+      - name: Sparse-clone every config folder (and library package code)
         run: |
           python3 - <<'PY'
           import importlib.util, subprocess, yaml
@@ -74,6 +75,10 @@ jobs:
           repos = yaml.safe_load(Path("PyAutoMind/repos.yaml").read_text())["repos"]
           for src in board.SOURCES:
               name, cfg = src["repo"], src["config"]
+              # a library's package .py files too: the board scans them for
+              # the config keys the code reads ("possibly unused keys")
+              patterns = [f"{cfg}/**"] + (
+                  [f"{src['package']}/**/*.py"] if src.get("package") else [])
               home = (repos.get(name) or {}).get("github")
               if not home:
                   print(f"::warning::{name}: no github slug in repos.yaml")
@@ -85,7 +90,7 @@ jobs:
                                   f"https://github.com/{home}", str(dest)],
                                  check=True, timeout=300)
                   subprocess.run(["git", "-C", str(dest), "sparse-checkout",
-                                  "set", "--no-cone", f"{cfg}/**"],
+                                  "set", "--no-cone", *patterns],
                                  check=True, timeout=60)
                   subprocess.run(["git", "-C", str(dest), "checkout", "--quiet"],
                                  check=True, timeout=300)

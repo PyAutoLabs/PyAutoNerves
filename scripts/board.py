@@ -26,13 +26,19 @@ board acts; it is a map, grown later if it needs to be.
   differs, keys only the workspace sets (**orphans** — no library defines
   them), keys only the stack sets. ``build/*.yaml`` is workspace tooling
   (CI/build lists, not library settings) and is grouped apart;
+* **possibly unused library keys**: every library package's ``.py`` (and
+  ``autonerves/``) is scanned for config lookups (``scan_lookups``) and each
+  key of a library settings file is classed ``used`` / ``section-read`` /
+  ``unused`` against the reads of the whole stack (``classify_files``) —
+  static and untrusted, so it only ever adds ``info`` feed items;
 * the ``PYAUTO_*`` environment variables read by ``autonerves/test_mode.py``,
   ``workspace.py`` and ``__init__.py`` — the non-YAML options the Nerves also
   own — each with the comment above it (or its function's docstring).
 
 **Where it reads from.** Locally, each source resolves through the body map
 (``PyAutoMind/repos.yaml`` ``path:``) under ``--root``; in the workflow,
-``--sources DIR`` points at sparse clones laid out ``DIR/<Repo>/<config dir>``.
+``--sources DIR`` points at sparse clones laid out ``DIR/<Repo>/<config dir>``
+(and ``DIR/<Repo>/<package>`` for a library's code).
 GitHub slugs come from the body map's ``github:``; the Nerves' own owner comes
 from ``git remote`` (the tenant firewall: no owner is written here).
 
@@ -59,6 +65,7 @@ import os
 import re
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import yaml
@@ -71,17 +78,19 @@ STATE_ITEMS_MAX = 20
 # The config sources, in one table. `stack` is the lookup order autonerves
 # uses behind a workspace (the last-imported library first, PyAutoFit last),
 # so a workspace file is compared against what the libraries would give.
+# `package` is a library's source dir, scanned for the config keys its code
+# reads (the "possibly unused keys" flag).
 SOURCES = (
     {"repo": "PyAutoFit", "config": "autofit/config", "kind": "library",
-     "stack": ()},
+     "package": "autofit", "stack": ()},
     {"repo": "PyAutoArray", "config": "autoarray/config", "kind": "library",
-     "stack": ()},
+     "package": "autoarray", "stack": ()},
     {"repo": "PyAutoGalaxy", "config": "autogalaxy/config", "kind": "library",
-     "stack": ()},
+     "package": "autogalaxy", "stack": ()},
     {"repo": "PyAutoLens", "config": "autolens/config", "kind": "library",
-     "stack": ()},
+     "package": "autolens", "stack": ()},
     {"repo": "PyAutoCTI", "config": "autocti/config", "kind": "library",
-     "stack": ()},
+     "package": "autocti", "stack": ()},
     {"repo": "autofit_workspace", "config": "config", "kind": "workspace",
      "stack": ("PyAutoFit",)},
     {"repo": "autogalaxy_workspace", "config": "config", "kind": "workspace",
@@ -420,16 +429,274 @@ def env_vars_from(texts: dict) -> list[dict]:
     return sorted(seen.values(), key=lambda e: e["name"])
 
 
+# --- config lookups in library code (the "not in use anymore" scan) ------------
+# autonerves resolves ``conf.instance["general"]["output"]["remove_files"]`` as
+# file ``general.yaml`` → section ``output`` → key ``remove_files`` (keys
+# lowercased, every layer merged), so a read is a dotted path whose head is the
+# config file's path without its suffix.
+#
+# Helpers that take a key name and read it under a fixed prefix — a literal
+# first argument is a read of ``prefix.<arg>``.
+HELPER_READS = {"should_output": ("output",)}
+# Files autonerves loads whole outside the subscript API
+# (``Config.logging_config`` opens ``logging.yaml`` and hands it to
+# ``logging.config.dictConfig``) — every key in them is a section read.
+WHOLESALE_FILES = ("logging",)
+# Config lookups are only counted once every library's package was scanned:
+# a partial scan would call every key of the missing library unused.
+LOOKUP_CLASSES = ("used", "section-read", "unused")
+# autonerves' own package — a config reader too (swappable for tests).
+NERVES_PACKAGE = NERVES_HOME / "autonerves"
+
+
+def _is_conf_root(node, names: set) -> bool:
+    """``conf.instance`` / ``x.conf.instance`` / ``conf.instance.dict`` /
+    a bare ``instance`` imported from ``autonerves.conf``."""
+    if isinstance(node, ast.Attribute) and node.attr == "dict":
+        node = node.value
+    if isinstance(node, ast.Attribute) and node.attr == "instance":
+        v = node.value
+        return (isinstance(v, ast.Name) and v.id == "conf") or \
+            (isinstance(v, ast.Attribute) and v.attr == "conf")
+    return isinstance(node, ast.Name) and node.id in names
+
+
+def _literal(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.lower()
+    return None
+
+
+def _chain(node, roots: set, local: dict):
+    """Unwind a subscript chain ending at ``node``: ``(keys, open)`` where
+    ``keys`` is the literal path from the root and ``open`` says a non-literal
+    subscript ended it (everything under ``keys`` may be read); ``None`` when
+    the chain does not start at the config."""
+    steps = []
+    cur = node
+    while True:
+        if isinstance(cur, ast.Subscript):
+            steps.append(cur.slice)
+            cur = cur.value
+        elif (isinstance(cur, ast.Call) and isinstance(cur.func, ast.Attribute)
+              and cur.func.attr == "get" and cur.args):
+            steps.append(cur.args[0])
+            cur = cur.func.value
+        else:
+            break
+    if isinstance(cur, ast.Name) and cur.id in local:
+        base = list(local[cur.id])
+    elif _is_conf_root(cur, roots):
+        base = []
+    else:
+        return None
+    keys = base
+    for s in reversed(steps):
+        lit = _literal(s)
+        if lit is None:
+            return keys, True
+        keys.append(lit)
+    return keys, False
+
+
+def _parents(tree) -> dict:
+    par = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            par[child] = node
+    return par
+
+
+def _is_chain_link(node, parent) -> bool:
+    """Whether ``node`` continues into ``parent`` as part of a longer chain."""
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return True
+    if isinstance(parent, ast.Attribute) and parent.value is node and \
+            parent.attr in ("get", "dict"):
+        return True
+    return False
+
+
+def lookups_from(text: str) -> tuple[set, set, set]:
+    """``(reads, wildcards, bound)`` — the dotted config paths one module
+    reads.
+
+    * a literal subscript chain from ``conf.instance`` (``.get("k")`` counts as
+      a subscript) is a read of that path;
+    * a non-literal subscript ends the chain: its literal prefix becomes a
+      wildcard (anything under it may be read);
+    * ``x = conf.instance["a"]["b"]`` then ``x["c"]`` is followed within the
+      function (or module, or a closure inside it) — the assignment reads
+      ``a.b`` itself (``bound``: the path is used, its keys are not covered),
+      each use of ``x`` reads ``a.b`` + its own literal keys, and a bare use
+      of ``x`` (passed on, iterated) reads ``a.b`` whole;
+    * ``HELPER_READS`` calls with a literal first argument.
+
+    Raises ``SyntaxError`` on a module that does not parse."""
+    tree = ast.parse(text)
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+                "conf") and (node.module or "").split(".")[0] in (
+                "autonerves", "autoconf"):
+            roots |= {a.asname or a.name for a in node.names
+                      if a.name == "instance"}
+    par = _parents(tree)
+    reads, wild, bound = set(), set(), set()
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+    scopes = [n for n in ast.walk(tree) if isinstance(n, funcs)]
+    scopes.append(tree)
+    owned_by, own_locals, skip = {}, {}, set()
+    for scope in scopes:
+        # nodes owned by this scope (a nested def is its own scope)
+        owned, stack = [], list(ast.iter_child_nodes(scope))
+        while stack:
+            n = stack.pop()
+            if isinstance(n, funcs):
+                continue
+            owned.append(n)
+            stack.extend(ast.iter_child_nodes(n))
+        owned_by[scope] = owned
+        local: dict = {}
+        for n in owned:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and \
+                    isinstance(n.targets[0], ast.Name):
+                got = _chain(n.value, roots, {})
+                if got and not got[1] and got[0]:
+                    local[n.targets[0].id] = tuple(got[0])
+                    bound.add(".".join(got[0]))
+                    skip.add(n.value)
+        own_locals[scope] = local
+    seen: set = set()
+    for scope in scopes:
+        # a closure sees the names bound in the functions around it
+        local, up = {}, par.get(scope)
+        chain_up = []
+        while up is not None:
+            if isinstance(up, funcs):
+                chain_up.append(up)
+            up = par.get(up)
+        for outer in reversed(chain_up):
+            local.update(own_locals[outer])
+        local.update(own_locals[scope])
+        owned = owned_by[scope]
+        for n in owned:
+            if n in seen or n in skip:
+                continue
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and \
+                    n.func.id in HELPER_READS and n.args:
+                lit = _literal(n.args[0])
+                if lit is not None:
+                    reads.add(".".join(HELPER_READS[n.func.id] + (lit,)))
+                continue
+            if not isinstance(n, (ast.Subscript, ast.Call, ast.Name,
+                                  ast.Attribute)):
+                continue
+            if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+                continue
+            if _is_chain_link(n, par.get(n)):
+                continue
+            got = _chain(n, roots, local)
+            if not got:
+                continue
+            seen.add(n)
+            keys, open_ = got
+            if not keys:
+                if open_:
+                    wild.add("")
+                continue
+            (wild if open_ else reads).add(".".join(keys))
+    return reads, wild, bound
+
+
+def scan_lookups(pkg_dir) -> dict:
+    """Every config read in a package's ``.py`` files:
+    ``{files, reads, wildcards, bound, unparsed}`` (sorted lists)."""
+    reads, wild, bound, unparsed, n = set(), set(), set(), [], 0
+    for path in sorted(Path(pkg_dir).rglob("*.py")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            unparsed.append(path.relative_to(pkg_dir).as_posix())
+            continue
+        if "instance" not in text and not any(h in text for h in HELPER_READS):
+            n += 1
+            continue
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # old escapes in library code
+                r, w, b = lookups_from(text)
+        except SyntaxError:
+            unparsed.append(path.relative_to(pkg_dir).as_posix())
+            continue
+        n += 1
+        reads |= r
+        wild |= w
+        bound |= b
+    return {"files": n, "reads": sorted(reads), "wildcards": sorted(wild),
+            "bound": sorted(bound), "unparsed": unparsed}
+
+
+def config_path(rel: str, key: str) -> str:
+    """A file key's full lookup path: ``visualize/general.yaml`` +
+    ``general.backend`` → ``visualize.general.general.backend``."""
+    stem = rel.rsplit(".", 1)[0].replace("/", ".")
+    return f"{stem}.{key}".lower() if key else stem.lower()
+
+
+def classify_key(path: str, reads: set, prefixes: set) -> str:
+    """``used`` — the path is read (``reads``: exact reads, wildcard stems and
+    bound locals), or a read runs through it (a section one of whose keys is
+    read); ``section-read`` — a whole-section read or wildcard (``prefixes``)
+    covers one of its ancestors; ``unused`` — nothing references it."""
+    if path in reads:
+        return "used"
+    dotted = path + "."
+    if any(r.startswith(dotted) for r in reads):
+        return "used"
+    parts = path.split(".")
+    for i in range(len(parts) - 1, -1, -1):
+        if ".".join(parts[:i]) in prefixes:
+            return "section-read"
+    return "unused"
+
+
+def classify_files(files: list[dict], lookups: dict) -> None:
+    """Stamp ``use`` on every key of every library settings file (in place),
+    against the reads of the whole stack — autonerves merges every layer, so a
+    PyAutoFit key read by PyAutoLens is used."""
+    reads, prefixes = set(), set(WHOLESALE_FILES)
+    for lk in lookups.values():
+        # a chain that stops on a section reads it whole; a wildcard stem
+        # ``a.b[x]`` reads ``a.b`` and may read anything under it
+        prefixes |= set(lk["reads"]) | set(lk["wildcards"])
+        reads |= set(lk["reads"]) | set(lk["wildcards"]) | \
+            set(lk.get("bound") or ())
+    for f in files:
+        if not f.get("_library") or f.get("prior") or f.get("error") or \
+                f.get("tooling"):
+            continue
+        counts = dict.fromkeys(LOOKUP_CLASSES, 0)
+        for k in f["keys"]:
+            k["use"] = classify_key(config_path(f["path"], k["k"]), reads,
+                                    prefixes)
+            counts[k["use"]] += 1
+        f["use_counts"] = counts
+
+
 # --- collection (the only I/O) --------------------------------------------------
-def _source_dir(src: dict, root: Path, body: dict, sources: Path | None
-                ) -> Path | None:
+def _source_dir(src: dict, root: Path, body: dict, sources: Path | None,
+                field: str = "config") -> Path | None:
+    sub = src.get(field)
+    if not sub:
+        return None
     if sources is not None:
-        cand = sources / src["repo"] / src["config"]
+        cand = sources / src["repo"] / sub
         return cand if cand.is_dir() else None
     rel = (body.get(src["repo"]) or {}).get("path")
     for base in ((root / rel) if rel else None, root / src["repo"]):
-        if base and (base / src["config"]).is_dir():
-            return base / src["config"]
+        if base and (base / sub).is_dir():
+            return base / sub
     return None
 
 
@@ -440,8 +707,13 @@ def _now_z() -> str:
 
 def build_snapshot(files: list[dict], sources: list[dict], env: list[dict],
                    errors: list[str], owner: str = "", repo: str = "",
-                   generated: str | None = None) -> dict:
-    """Assemble the snapshot from read file records (pure)."""
+                   generated: str | None = None,
+                   lookups: dict | None = None) -> dict:
+    """Assemble the snapshot from read file records (pure). ``lookups``
+    (``{reader: scan_lookups(…)}``) classifies every library settings key —
+    only when every library's package was scanned (``None`` skips it)."""
+    if lookups is not None:
+        classify_files(files, lookups)
     by_repo: dict = {}
     for f in files:
         by_repo.setdefault(f["repo"], {})[f["path"]] = f
@@ -465,13 +737,17 @@ def build_snapshot(files: list[dict], sources: list[dict], env: list[dict],
         src["keys"] = sum(len(r["keys"]) for r in recs)
         src["priors"] = sum(1 for r in recs if r["prior"])
         src["errors"] = sum(1 for r in recs if r["error"])
+        if src["kind"] == "library" and lookups is not None:
+            src["unused"] = sum((r.get("use_counts") or {}).get("unused", 0)
+                                for r in recs)
     clean = [{k: v for k, v in f.items() if not k.startswith("_")}
              for f in files]
     return {"schema_version": SCHEMA_VERSION,
             "generated": generated or _now_z(),
             "owner": owner, "repo": repo or "PyAutoNerves",
             "sources": sources, "files": clean, "overrides": overrides,
-            "env_vars": env, "errors": errors}
+            "env_vars": env, "errors": errors,
+            "lookups": lookups or {}}
 
 
 def collect(root=None, brain=None, mind=None, sources_dir=None,
@@ -486,6 +762,7 @@ def collect(root=None, brain=None, mind=None, sources_dir=None,
         errors.append("PyAutoMind/repos.yaml not found — GitHub links use this "
                       "repo's owner and local paths fall back to <root>/<Repo>")
     srcs, files = [], []
+    scans: dict | None = {}
     for src in SOURCES:
         meta = body.get(src["repo"]) or {}
         github = meta.get("github") or (f"{owner}/{src['repo']}" if owner else "")
@@ -496,6 +773,8 @@ def collect(root=None, brain=None, mind=None, sources_dir=None,
         if where is None:
             errors.append(f"{src['repo']}: config dir {src['config']}/ not found")
             srcs.append(entry)
+            if src["kind"] == "library":
+                scans = None  # its code's reads are unknown: classify nothing
             continue
         entry["found"] = True
         for path in sorted(where.rglob("*")):
@@ -507,16 +786,33 @@ def collect(root=None, brain=None, mind=None, sources_dir=None,
             except (OSError, UnicodeDecodeError) as e:
                 errors.append(f"{src['repo']}/{rel}: unreadable ({e})")
                 continue
-            files.append(read_file(src["repo"], rel, text, src["kind"]))
+            rec = read_file(src["repo"], rel, text, src["kind"])
+            rec["_library"] = src["kind"] == "library"
+            files.append(rec)
         srcs.append(entry)
+        if src["kind"] == "library":
+            pkg = _source_dir(src, root, body, sdir, "package")
+            if pkg is None:
+                errors.append(f"{src['repo']}: package {src.get('package')}/ "
+                              "not found — config keys are not classified")
+                scans = None
+            elif scans is not None:
+                scans[src["repo"]] = scan_lookups(pkg)
+                for rel in scans[src["repo"]]["unparsed"]:
+                    errors.append(f"{src['repo']}: {src['package']}/{rel} did "
+                                  "not parse — its config reads are not counted")
     texts = {}
     for rel in ENV_MODULES:
         try:
             texts[rel] = (NERVES_HOME / rel).read_text(encoding="utf-8")
         except OSError as e:
             errors.append(f"env vars: {rel} unreadable ({e})")
+    if scans is not None:
+        # autonerves reads config itself (should_output, the backend) — its
+        # own package is a reader too, whatever repo it runs from.
+        scans["PyAutoNerves"] = scan_lookups(NERVES_PACKAGE)
     return build_snapshot(files, srcs, env_vars_from(texts), errors, owner,
-                          repo, generated)
+                          repo, generated, scans)
 
 
 # --- derived views ----------------------------------------------------------------
@@ -546,12 +842,28 @@ def slug(rel: str) -> str:
     return "f-" + re.sub(r"[^A-Za-z0-9]+", "-", rel).strip("-").lower()
 
 
+def unused_anchor(lib: str) -> str:
+    return "unused-" + re.sub(r"[^A-Za-z0-9]+", "-", lib).strip("-").lower()
+
+
 def orphans(snap: dict) -> list[dict]:
     return [o for o in snap.get("overrides") or [] if o["workspace_only"]]
 
 
 def parse_errors(snap: dict) -> list[dict]:
     return [f for f in snap.get("files") or [] if f.get("error")]
+
+
+def unused_keys(snap: dict) -> dict:
+    """``{library: [{path, k, line}]}`` — the library settings keys no code
+    in the stack reads, in source order (only classified snapshots)."""
+    out: dict = {}
+    for f in snap.get("files") or []:
+        for k in f.get("keys") or []:
+            if k.get("use") == "unused":
+                out.setdefault(f["repo"], []).append(
+                    {"path": f["path"], "k": k["k"], "line": k["line"]})
+    return out
 
 
 def status(snap: dict) -> str:
@@ -571,12 +883,23 @@ def _summary(snap: dict) -> str:
         bits.append(f"{len(parse_errors(snap))} unparseable")
     if orphans(snap):
         bits.append(f"{len(orphans(snap))} with orphan keys")
+    unused = sum(len(v) for v in unused_keys(snap).values())
+    if unused:
+        bits.append(f"{unused} possibly unused library keys")
     return " · ".join(bits)
 
 
 def _keys_text(keys: list[str], limit: int = 6) -> str:
     shown = ", ".join(keys[:limit])
     return shown + (f" (+{len(keys) - limit} more)" if len(keys) > limit else "")
+
+
+UNUSED_CAVEAT = (
+    "A static scan of every library's (and autonerves') Python for "
+    "`conf.instance[...]` lookups: a key is *unused* when no literal lookup "
+    "reads it, no read runs through it and no section read or non-literal "
+    "subscript covers it. Keys read dynamically some other way are false "
+    "positives — check before deleting.")
 
 
 # --- markdown -----------------------------------------------------------------------
@@ -612,6 +935,15 @@ def _render_md(snap: dict) -> str:
         out += ["", "## Unparseable files", ""]
         for f in parse_errors(snap):
             out.append(f"- `{f['repo']}/{f['path']}`: {f['error']}")
+    unused = unused_keys(snap)
+    if unused:
+        out += ["", "## Possibly unused config keys (no library code reads "
+                "them)", "", UNUSED_CAVEAT, ""]
+        for lib, keys in unused.items():
+            out.append(f"- **{lib}** ({len(keys)}):")
+            for u in keys:
+                out.append(f"  - [`{u['path']}` `{u['k']}`]"
+                           f"({file_url(snap, lib, u['path'], u['line'])})")
     if snap.get("env_vars"):
         out += ["", "## Environment variables", ""]
         for e in snap["env_vars"]:
@@ -662,7 +994,8 @@ def to_state(snap: dict) -> dict:
     """The organ-cockpit feed (contract v1, owned by PyAutoBrain
     ``board/_state.py``): one yellow item per unparseable file, then one per
     workspace file carrying orphan keys, then collection errors (info);
-    capped at 20. Never red — the board is a map, not a gate."""
+    one info item per library with possibly unused keys; capped at 20. Never
+    red — the board is a map, not a gate."""
     st = status(snap)
     items = []
     for f in parse_errors(snap):
@@ -687,6 +1020,22 @@ def to_state(snap: dict) -> dict:
                           f"); check {' → '.join(o['stack'])} and either add "
                           "them to the library config or drop them from the "
                           "workspace.", 600)})
+    # Info only, never yellow: the scan is static and untrusted until a human
+    # has reviewed its false positives.
+    for lib, keys in unused_keys(snap).items():
+        items.append({"severity": "info",
+                      "text": _clip(f"{lib}: {len(keys)} possibly unused "
+                                    f"config key{'s' if len(keys) != 1 else ''}"
+                                    f" (no library code reads "
+                                    f"{'them' if len(keys) != 1 else 'it'})"),
+                      "url": (pages_url(snap) + "#" + unused_anchor(lib)
+                              if pages_url(snap) else None),
+                      "prompt": _clip(
+                          f"Review the {lib} config keys the Nerves board "
+                          f"flags as possibly unused ("
+                          f"{', '.join(u['path'] + ':' + u['k'] for u in keys[:15])}"
+                          "); confirm no code reads them, then remove them "
+                          "from the library config and the workspaces.", 600)})
     items += [{"severity": "info", "text": _clip(f"unavailable this render: {e}"),
                "url": None, "prompt": None} for e in snap.get("errors") or []]
     if st == "grey":
@@ -727,6 +1076,7 @@ section.file h3{margin:.1rem 0 .25rem;font-size:1rem}
  border:1px solid var(--line);border-radius:999px;background:var(--btn)}
 .chip.y{border-color:var(--warn);color:var(--warn)}
 .chip.r{border-color:var(--bad);color:var(--bad)}
+.chip.u{border-style:dashed;color:var(--muted)}
 pre.src{font:.8em/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
  background:var(--btn);border:1px solid var(--line);border-radius:8px;
  padding:.5rem 0;margin:.4rem 0}
@@ -754,6 +1104,7 @@ function flt(q){q=q.toLowerCase().trim();var out=document.getElementById('hits')
  out.innerHTML=hits.map(function(e){var f=IDX.f[e[0]],r=IDX.r[f[0]];
   var href='repos/'+encodeURIComponent(r)+'.html#'+f[2]+(e[2]?'-L'+e[2]:'');
   return '<li><a href="'+href+'"><code>'+esc(e[1]||f[1])+'</code></a> '+
+   (e[4]==='unused'?'<span class="chip u">unused</span> ':'')+
    '<span class="where">'+esc(r+'/'+f[1])+(e[2]?':'+e[2]:'')+'</span>'+
    (e[3]?'<br><span class="muted">'+esc(e[3])+'</span>':'')+'</li>';}).join('');
  info.textContent=total?(total+' match'+(total==1?'':'es')+
@@ -806,7 +1157,8 @@ every library and workspace · read-only · generated
 def key_index(snap: dict) -> dict:
     """The compact search index the index page embeds: repos ``r``, files
     ``f = [repoIdx, path, anchor]`` and entries ``k = [fileIdx, key, line,
-    comment]`` (a file itself is an entry with an empty key). Prior files
+    comment, use]`` (a file itself is an entry with an empty key; ``use`` is
+    the lookup class of a library settings key, else ``""``). Prior files
     index their ``Class`` and ``Class.param`` paths, not every leaf field."""
     repos = [s["repo"] for s in snap.get("sources") or []]
     ri = {r: i for i, r in enumerate(repos)}
@@ -817,11 +1169,12 @@ def key_index(snap: dict) -> dict:
             repos.append(f["repo"])
         fi = len(files)
         files.append([ri[f["repo"]], f["path"], slug(f["path"])])
-        entries.append([fi, "", 0, ""])
+        entries.append([fi, "", 0, "", ""])
         for k in f.get("keys") or []:
             if f.get("prior") and k["k"].count(".") > 1:
                 continue
-            entries.append([fi, k["k"], k["line"], _clip(k["c"], 120)])
+            entries.append([fi, k["k"], k["line"], _clip(k["c"], 120),
+                            k.get("use", "")])
     return {"r": repos, "f": files, "k": entries}
 
 
@@ -835,6 +1188,8 @@ def _render_html_index(snap: dict) -> str:
     stats = t_.stats((len(files), "files"), (len(found), "sources"),
                      (sum(len(f["keys"]) for f in files), "keys"),
                      (len(ov), "overrides"), (len(orphans(snap)), "orphaned"),
+                     (sum(len(v) for v in unused_keys(snap).values()),
+                      "possibly unused"),
                      (len(snap.get("env_vars") or []), "env vars")) \
         if hasattr(t_, "stats") else ""
     rows = []
@@ -912,6 +1267,28 @@ def _render_html_index(snap: dict) -> str:
             f"{_esc(f['repo'])}/{_esc(f['path'])}</a> — <span class='errline'>"
             f"{_esc(f['error'])}</span></li>" for f in parse_errors(snap))
             + "</ul>")
+    unused_html = ""
+    unused = unused_keys(snap)
+    if unused:
+        groups = []
+        for lib, keys in unused.items():
+            lis = "".join(
+                f"<li><a href=\"repos/{_esc(lib)}.html#{slug(u['path'])}-L"
+                f"{u['line']}\"><code>{_esc(u['k'])}</code></a> <span "
+                f"class='where'>{_esc(u['path'])}:{u['line']}</span>"
+                + (f" · <a href=\"{_esc(file_url(snap, lib, u['path'], u['line']))}"
+                   f"\">GitHub</a>" if file_url(snap, lib, u['path']) else "")
+                + "</li>" for u in keys)
+            groups.append(f"<details id='{unused_anchor(lib)}'><summary><b>"
+                          f"{_esc(lib)}</b> — {len(keys)} key"
+                          f"{'s' if len(keys) != 1 else ''}</summary>"
+                          f"<ul class='hits'>{lis}</ul></details>")
+        unused_html = ("<h2>Possibly unused config keys</h2><p class='muted'>"
+                       + _esc(UNUSED_CAVEAT).replace("`", "").replace("*", "") + "</p>"
+                       + "".join(groups))
+    elif snap.get("lookups"):
+        unused_html = ("<h2>Possibly unused config keys</h2><p class='muted'>"
+                       "none — every library settings key is read.</p>")
     errors = ""
     if snap.get("errors"):
         errors = ("<div class='errors'><p class='muted'>unavailable this "
@@ -937,6 +1314,7 @@ def _render_html_index(snap: dict) -> str:
 <ul id="hits" class="hits"></ul>
 {overview}
 {override}
+{unused_html}
 {problems}
 {env_html}
 {tool_html}
@@ -947,11 +1325,14 @@ def _render_html_index(snap: dict) -> str:
 
 def _source_html(f: dict, sid: str) -> str:
     err_line = f.get("error_line") if f.get("error") else None
+    unused = {k["line"] for k in f.get("keys") or [] if k.get("use") == "unused"}
     out = []
     for n, line in enumerate(f.get("text", "").splitlines(), start=1):
         code, comment = split_comment(line)
         cls = " errline" if n == err_line else ""
         inner = _esc(code) + (f"<em>{_esc(comment)}</em>" if comment else "")
+        if n in unused:
+            inner += " <span class='chip u'>unused</span>"
         out.append(f'<span class="l{cls}" id="{sid}-L{n}"><i>{n}</i>{inner}</span>')
     return '<pre class="src">' + "".join(out) + "</pre>"
 
@@ -975,6 +1356,10 @@ def _file_html(snap: dict, f: dict, ov: dict | None) -> str:
     kind = ("tooling" if f.get("tooling") else "prior file" if f.get("prior")
             else "settings")
     meta = [f"{f['lines']} lines", f"{len(f['keys'])} keys", kind]
+    uc = f.get("use_counts")
+    if uc:
+        meta.append(f"{uc['used']} used · {uc['section-read']} section-read · "
+                    f"{uc['unused']} unused")
     notes = []
     if f.get("error"):
         notes.append(f"<p class='errline'>does not parse: {_esc(f['error'])}</p>")
@@ -995,6 +1380,12 @@ def _file_html(snap: dict, f: dict, ov: dict | None) -> str:
             f"{_esc(k)}</span>" for k in ov["workspace_only"]) + "".join(
             f"<span class='chip y' title='differs from the library value'>"
             f"{_esc(k)}</span>" for k in ov["differs"]) + "</div>"
+    unused = [k for k in f.get("keys") or [] if k.get("use") == "unused"]
+    if unused:
+        diff_chips += "<div class='chips'>" + "".join(
+            f"<a class='chip u' href='#{sid}-L{k['line']}' title='possibly "
+            f"unused: no library code reads this key'>unused: {_esc(k['k'])}"
+            f"</a>" for k in unused) + "</div>"
     if f.get("prior") and f.get("priors"):
         body = (f"<details><summary>priors ({len(f['priors'])} params)"
                 f"</summary>{_prior_html(f, sid)}</details>")
