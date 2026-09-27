@@ -84,10 +84,24 @@ NUMBA_CACHE_DIR=/tmp/numba_cache MPLCONFIGDIR=/tmp/matplotlib python -m pytest t
 (<https://pyautolabs.github.io/PyAutoNerves/>): every YAML file under each
 library's `<package>/config/` and each workspace's `config/`, with keys,
 comments, source, prior tables, the workspace → library override map, the
-`PYAUTO_*` env vars, and a `state.json` cockpit feed (contract owned by
-`PyAutoBrain/board/_state.py`). The config sources are the `SOURCES` table at
-the top of the script (repo, config dir, kind, library lookup stack) — add a
-new library or workspace there. It is stdlib + PyYAML, is **not** packaged
+`PYAUTO_*` env vars, the "possibly unused config keys" scan, and a
+`state.json` cockpit feed (contract owned by `PyAutoBrain/board/_state.py`).
+The config sources are the `SOURCES` table at the top of the script (repo,
+config dir, kind, library package dir, library lookup stack) — add a new
+library or workspace there.
+
+**Unused-key classification** (`scan_lookups` → `classify_files`): an AST
+scan of every library package's `.py` (and `autonerves/`) collects the config
+paths the code reads — literal `conf.instance[...]` / `instance[...]` chains
+(`.get("k")` counts; a non-literal subscript ends the chain as a wildcard),
+sections bound to a local and indexed later in the function or a closure,
+and `should_output("name")` (`HELPER_READS`); `logging.yaml` is loaded whole
+(`WHOLESALE_FILES`). Each library settings key (priors exempt) is `used`,
+`section-read` or `unused` against the reads of the *whole* stack. It is
+skipped entirely if any library's config or package dir is missing (a partial
+scan would call that library's reads unused). It is static and untrusted:
+unused keys are one `info` item per library in `state.json`, never yellow —
+add a new lookup style to `lookups_from` rather than colouring the feed. It is stdlib + PyYAML, is **not** packaged
 (`scripts/` is excluded in `pyproject.toml` / `MANIFEST.in`), and is tested by
 `test_autonerves/test_board.py`. Published by
 `.github/workflows/nerves_board.yml` (daily + dispatch). Local run:
