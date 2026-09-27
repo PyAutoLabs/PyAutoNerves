@@ -315,6 +315,89 @@ def test_override_diff_runs_across_the_whole_stack(snap):
     assert _file(snap, "ws_demo", "build/no_run.yaml")["tooling"] is True
 
 
+def _overrides(lib_files: dict, ws_files: dict, stack=("LibHigh", "LibLow")):
+    """Override records from in-memory files: ``{repo: {rel: text}}`` for
+    the libraries, ``{rel: text}`` for ws_demo."""
+    files = [board.read_file(repo, rel, text, "library")
+             for repo, rels in lib_files.items() for rel, text in rels.items()]
+    files += [board.read_file("ws_demo", rel, text, "workspace")
+              for rel, text in ws_files.items()]
+    sources = [{"repo": r, "kind": "library", "config": "config", "stack": []}
+               for r in lib_files]
+    sources.append({"repo": "ws_demo", "kind": "workspace", "config": "config",
+                    "stack": list(stack)})
+    snap = board.build_snapshot(files, sources, [], [])
+    return {o["path"]: o for o in snap["overrides"]}, snap
+
+
+def test_a_library_file_section_is_the_workspace_directory_file():
+    # autonerves merges LibHigh's single visualize.yaml and a visualize/
+    # directory alike: section `plots` of the file IS visualize/plots.yaml
+    lib = {"LibHigh": {"visualize.yaml": "plots:\n  fit:\n    subplot: true\n"
+                                         "general:\n  backend: agg\n"},
+           "LibLow": {"visualize/plots.yaml": "dataset:\n  image: true\n"}}
+    ov, snap = _overrides(lib, {
+        "visualize/plots.yaml": "fit:\n  subplot: false\ndataset:\n"
+                                "  image: true\nstale:\n  flag: 1\n"})
+    o = ov["visualize/plots.yaml"]
+    assert o["stack"] == ["LibHigh", "LibLow"]
+    assert o["counterpart_path"] == "visualize.yaml § plots"
+    assert o["differs"] == ["fit.subplot"]
+    # a genuinely unknown key is still an orphan
+    assert o["workspace_only"] == ["stale.flag"]
+    assert [x["path"] for x in board.orphans(snap)] == ["visualize/plots.yaml"]
+    # …and the other way round: a workspace file against a library directory
+    ov, _ = _overrides({"LibLow": {"visualize/general.yaml":
+                                   "general:\n  backend: agg\n"}},
+                       {"visualize.yaml": "general:\n  general:\n"
+                                          "    backend: tkagg\n"},
+                       stack=("LibLow",))
+    o = ov["visualize.yaml"]
+    assert o["counterpart_path"] == "visualize/"
+    assert o["differs"] == ["general.general.backend"]
+    assert o["workspace_only"] == []
+
+
+def test_a_library_file_shadows_its_directory_and_a_missing_section_is_none():
+    lib = {"visualize.yaml": board.read_file("L", "visualize.yaml",
+                                             "plots:\n  a: 1\n", "library"),
+           "visualize/plots.yaml": board.read_file("L", "visualize/plots.yaml",
+                                                   "b: 2\n", "library")}
+    # RecursiveConfig takes the file: the directory is never read
+    assert board.resolve_in_library(lib, "visualize/plots.yaml")["_data"] == \
+        {"a": 1}
+    assert board.resolve_in_library(lib, "visualize/other.yaml") is None
+    assert board.resolve_in_library(lib, "general.yaml") is None
+
+
+def test_nerves_owned_version_keys_are_not_orphans(monkeypatch):
+    monkeypatch.setattr(board, "theme", lambda: FAKE_THEME)
+    ov, snap = _overrides(
+        {"LibLow": {"general.yaml": "output:\n  log_level: INFO\n"}},
+        {"general.yaml": "version:\n  minimum_library_version: 2026.1.1\n"
+                         "  workspace_version_check: false\n"
+                         "  python_version_check: false\n"
+                         "  workspace_version: 2025.1.1\n"
+                         "  made_up_check: true\n"},
+        stack=("LibLow",))
+    o = ov["general.yaml"]
+    assert o["nerves_owned"] == ["version.minimum_library_version",
+                                 "version.python_version_check",
+                                 "version.workspace_version",
+                                 "version.workspace_version_check"]
+    # the allow-list is exact: an unknown key under version: still flags
+    assert o["workspace_only"] == ["version.made_up_check"]
+    page = board.render(snap, "html-repo", "ws_demo")
+    assert "1 orphan · 4 owned by autonerves" in page
+    # and only general.yaml is allow-listed
+    ov, _ = _overrides(
+        {"LibLow": {"other.yaml": "a: 1\n"}},
+        {"other.yaml": "version:\n  workspace_version_check: false\n"},
+        stack=("LibLow",))
+    assert ov["other.yaml"]["workspace_only"] == \
+        ["version.workspace_version_check"]
+
+
 def test_env_var_panel_from_module_text():
     env = {e["name"]: e for e in board.env_vars_from({"demo.py": FAKE_MODULE})}
     assert set(env) == {"PYAUTO_DEMO_QUIET", "PYAUTO_DEMO_LIMIT"}

@@ -19,13 +19,17 @@ board acts; it is a map, grown later if it needs to be.
   or lower/upper · width modifier · limits;
 * **the override map**: autonerves resolves a key workspace → last-imported
   library → … → PyAutoFit (``conf.Config.push(keep_first=True)``, keys
-  lowercased), so every workspace file is looked up, by relative path,
-  across that workspace's library stack in the same order. The *counterpart*
-  is the first library holding the file; the diff is against the merged
-  stack (the value autonerves would fall back to): keys whose value
-  differs, keys only the workspace sets (**orphans** — no library defines
-  them), keys only the stack sets. ``build/*.yaml`` is workspace tooling
-  (CI/build lists, not library settings) and is grouped apart;
+  lowercased), so every workspace file is looked up across that
+  workspace's library stack in the same order — by relative path, where a
+  library ``X.yaml``'s section ``f`` is the workspace's ``X/f.yaml`` and the
+  other way round, as ``RecursiveConfig`` merges them (prior files: same
+  path only). The *counterpart* is the first library holding the file;
+  the diff is against the merged stack (the value autonerves would fall
+  back to): keys whose value differs, keys only the workspace sets
+  (**orphans** — no library defines them), keys only the stack sets. The
+  version-handshake keys autonerves reads itself (``NERVES_OWNED``) are
+  *owned*, never orphans. ``build/*.yaml`` is workspace tooling (CI/build
+  lists, not library settings) and is grouped apart;
 * **possibly unused library keys**: every library package's ``.py`` (and
   ``autonerves/``) is scanned for config lookups (``scan_lookups``) and each
   key of a library settings file is classed ``used`` / ``section-read`` /
@@ -351,10 +355,81 @@ def read_file(repo: str, rel: str, text: str, kind: str) -> dict:
     return rec
 
 
+# Keys autonerves itself reads from a workspace's config — the version
+# handshake (``autonerves/workspace.py``, ``autonerves/__init__.py``). The
+# Nerves ship no YAML, so no library defines them: owned, never orphans.
+NERVES_OWNED = {
+    "general.yaml": ("version.workspace_version",
+                     "version.minimum_library_version",
+                     "version.workspace_version_check",
+                     "version.python_version_check"),
+}
+
+_MISSING = object()
+
+
+def _section(data, parts: list[str]):
+    """``data`` descended through ``parts`` (keys lowercased, as autonerves
+    reads them), else ``_MISSING``."""
+    for p in parts:
+        if not isinstance(data, dict):
+            return _MISSING
+        data = next((v for k, v in data.items() if str(k).lower() == p),
+                    _MISSING)
+        if data is _MISSING:
+            return _MISSING
+    return data
+
+
+def resolve_in_library(lib_files: dict, rel: str) -> dict | None:
+    """What one library gives for a workspace file ``rel`` (``lib_files`` is
+    ``{path: record}``), resolved the way autonerves' ``RecursiveConfig``
+    walks a config dir: at each level of the path a ``<name>.yml``/``.yaml``
+    file shadows a ``<name>/`` directory, and a file's top-level sections are
+    the files of the directory form. So a library ``visualize.yaml``'s
+    ``general:`` section is the workspace's ``visualize/general.yaml``, and a
+    library ``visualize/`` directory is a workspace ``visualize.yaml``.
+    Returns a stack record (``repo``, ``path`` — the library file, with a
+    ``§ section`` when one — and ``_data``), or ``None``."""
+    # file stems reach autonerves lowercased (DictWrapper): match them so
+    files = {p.lower(): r for p, r in lib_files.items()}
+    parts = rel.rsplit(".", 1)[0].lower().split("/")
+    for i in range(len(parts)):
+        stem = "/".join(parts[:i + 1])
+        rec = next((files[stem + s] for s in YAML_SUFFIXES[::-1]
+                    if stem + s in files), None)
+        if rec is not None:
+            if rec["error"]:
+                return None
+            data = _section(rec.get("_data"), parts[i + 1:])
+            if data is _MISSING:
+                return None
+            where = rec["path"] + (f" § {'.'.join(parts[i + 1:])}"
+                                   if parts[i + 1:] else "")
+            return {"repo": rec["repo"], "path": where, "_data": data}
+        if not any(p.startswith(stem + "/") for p in files):
+            return None
+    # the whole path is a library directory: each entry is a section
+    children = set()
+    for p in files:
+        if p.startswith(stem + "/"):
+            head, _, tail = p[len(stem) + 1:].partition("/")
+            children.add(head if tail else head.rsplit(".", 1)[0])
+    data = {}
+    for child in sorted(children - {"priors"}):  # RecursiveConfig skips priors
+        sub = resolve_in_library(lib_files, f"{stem}/{child}.yaml")
+        if sub is not None:
+            data[child] = sub["_data"]
+    if not data:
+        return None
+    repo = next(iter(files.values()))["repo"]
+    return {"repo": repo, "path": stem + "/", "_data": data}
+
+
 def diff_against_stack(ws: dict, stack_recs: list[dict]) -> dict:
     """The override record for one workspace file against its library stack
     (``stack_recs`` in autonerves lookup order, only the libraries that hold
-    the same relative path)."""
+    it — by relative path, or through ``resolve_in_library``)."""
     # A prior file is compared per parameter: a workspace that swaps a
     # Gaussian for a Uniform changes one spec, it does not orphan the new
     # prior's lower/upper fields.
@@ -370,12 +445,17 @@ def diff_against_stack(ws: dict, stack_recs: list[dict]) -> dict:
     lines = {k["k"].lower(): k["line"] for k in ws.get("keys") or []}
     differs = sorted(k for k in wflat if k in merged and merged[k] != wflat[k])
     ws_only = sorted(k for k in wflat if k not in merged)
+    owned = set(NERVES_OWNED.get(ws["path"], ()))
+    nerves_owned = [k for k in ws_only if k in owned]
+    ws_only = [k for k in ws_only if k not in owned]
     lib_only = sorted(k for k in merged if k not in wflat)
     first = stack_recs[0] if stack_recs else None
     return {"repo": ws["repo"], "path": ws["path"],
             "counterpart": first["repo"] if first else None,
+            "counterpart_path": first["path"] if first else None,
             "stack": [r["repo"] for r in stack_recs],
             "differs": differs, "workspace_only": ws_only,
+            "nerves_owned": nerves_owned,
             "library_only": lib_only[:50], "library_only_count": len(lib_only),
             "first_orphan_line": min((lines.get(k, 0) for k in ws_only),
                                      default=0) or 1}
@@ -724,9 +804,16 @@ def build_snapshot(files: list[dict], sources: list[dict], env: list[dict],
         for rel, rec in sorted((by_repo.get(src["repo"]) or {}).items()):
             if rec["tooling"] or rec["error"]:
                 continue
-            stack = [by_repo[lib][rel] for lib in src.get("stack") or ()
-                     if rel in (by_repo.get(lib) or {})
-                     and not by_repo[lib][rel]["error"]]
+            if rec["prior"]:
+                # priors resolve by class through JSONPriorConfig, not
+                # RecursiveConfig: same relative path only
+                stack = [by_repo[lib][rel] for lib in src.get("stack") or ()
+                         if rel in (by_repo.get(lib) or {})
+                         and not by_repo[lib][rel]["error"]]
+            else:
+                stack = [r for r in (resolve_in_library(by_repo[lib], rel)
+                                     for lib in src.get("stack") or ()
+                                     if by_repo.get(lib)) if r is not None]
             if not stack:
                 continue
             overrides.append(diff_against_stack(rec, stack))
@@ -1364,10 +1451,13 @@ def _file_html(snap: dict, f: dict, ov: dict | None) -> str:
     if f.get("error"):
         notes.append(f"<p class='errline'>does not parse: {_esc(f['error'])}</p>")
     if ov:
+        owned = (f" · {len(ov['nerves_owned'])} owned by autonerves"
+                 if ov.get("nerves_owned") else "")
         notes.append(f"<p class='muted'>overrides <b>{_esc(ov['counterpart'])}"
-                     f"</b>/{_esc(f['path'])} (stack: "
-                     f"{_esc(' → '.join(ov['stack']))}) · {len(ov['differs'])} "
-                     f"differ · {len(ov['workspace_only'])} orphan · "
+                     f"</b>/{_esc(ov.get('counterpart_path') or f['path'])} "
+                     f"(stack: {_esc(' → '.join(ov['stack']))}) · "
+                     f"{len(ov['differs'])} differ · "
+                     f"{len(ov['workspace_only'])} orphan{owned} · "
                      f"{ov['library_only_count']} from the stack</p>")
     chips = "".join(f"<span class='chip'>{_esc(k)}</span>"
                     for k in f.get("top_keys", [])[:40])
