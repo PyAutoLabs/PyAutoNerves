@@ -32,11 +32,13 @@ dependencies = [
     # wheels for >=0.7), so the markers let Intel Macs resolve to the
     # NumPy-only path instead of failing at install. jax_wrapper warns loudly
     # at import when JAX is absent.
+    # CPU batched LAPACK can deadlock in 0.10.x / 0.11.0 (Heart#274).
+    # Preserve older versions; 0.9.2 and 0.11.2 are compatibility witnesses.
     # jax 0.11 note: 0.11 requires numpy>=2.1 and scipy>=1.15, so this cap
     # widen also raises those effective floors for every install that
     # resolves jax (PyAutoFit#1510).
-    'jax>=0.7.0,<0.12.0; sys_platform != "darwin" or platform_machine == "arm64"',
-    'jaxlib>=0.7.0,<0.12.0; sys_platform != "darwin" or platform_machine == "arm64"',
+    'jax>=0.7.0,<0.12.0,!=0.10.*,!=0.11.0; sys_platform != "darwin" or platform_machine == "arm64"',
+    'jaxlib>=0.7.0,<0.12.0,!=0.10.*,!=0.11.0; sys_platform != "darwin" or platform_machine == "arm64"',
     'jaxnnls==1.0.1; sys_platform != "darwin" or platform_machine == "arm64"'
 ]
 

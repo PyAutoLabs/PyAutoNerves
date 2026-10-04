@@ -115,3 +115,30 @@ Nothing on the board edits config.
   [PyAutoBrain/ORGANISM.md](https://github.com/PyAutoLabs/PyAutoBrain/blob/main/ORGANISM.md),
   documented in full at <https://pyautoscientist.readthedocs.io>
 - Ecosystem: [PyAutoLabs on GitHub](https://github.com/PyAutoLabs)
+
+## JAX compatibility
+
+The package retains JAX/JAXlib `>=0.7,<0.12`, excluding `0.10.*` and `0.11.0`.
+Those excluded releases contain CPU batched LAPACK scheduling that can deadlock
+while materializing a vectorized likelihood (PyAutoHeart#274). The failure was
+captured on 0.10.2; tagged source identifies the same path in the other excluded
+releases. Open-source builds disable it from 0.11.1. This restriction does not
+replace the separate historical FFT/Eigen workaround.
+
+The compatibility diagnostics exercise **0.9.2** as an older endpoint and
+**0.11.2** as the recommended validation baseline. They do not certify every
+version permitted by the retained range or promise identical performance across
+versions. A new minimum of 0.11.2 is deliberately avoided: it would unnecessarily
+force newer NumPy/SciPy requirements on users with working older environments.
+
+Updated family packages require `autonerves>2026.10.4.1` so their resolver cannot
+fall back to a Nerves release without the exclusions. This is a release ordering
+requirement: publish a Nerves wheel containing this policy before the corresponding
+family wheels. No release version is chosen by this bound, and existing published
+wheels are not retroactively repaired. An unpinned family package can still be
+backtracked to an entirely older family release; select the repaired family
+release explicitly when applying the fix to a constrained environment.
+
+Keep JAX, JAXlib and any CUDA plugin on a mutually compatible version. Use pip's
+resolver rather than `--no-deps`, and verify the resulting environment with
+`python -m pip check`. Existing lockfiles need regeneration to adopt the policy.
