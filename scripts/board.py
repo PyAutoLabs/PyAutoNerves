@@ -1272,13 +1272,6 @@ def _render_html_index(snap: dict) -> str:
     files = snap.get("files") or []
     ov = snap.get("overrides") or []
     found = [s for s in snap.get("sources") or [] if s.get("found")]
-    stats = t_.stats((len(files), "files"), (len(found), "sources"),
-                     (sum(len(f["keys"]) for f in files), "keys"),
-                     (len(ov), "overrides"), (len(orphans(snap)), "orphaned"),
-                     (sum(len(v) for v in unused_keys(snap).values()),
-                      "possibly unused"),
-                     (len(snap.get("env_vars") or []), "env vars")) \
-        if hasattr(t_, "stats") else ""
     rows = []
     for s in snap.get("sources") or []:
         name = (f"<a href=\"repos/{_esc(s['repo'])}.html\">{_esc(s['repo'])}</a>"
@@ -1293,7 +1286,7 @@ def _render_html_index(snap: dict) -> str:
                     f"<td>{_esc(s['kind'])}</td><td class='n'>{s['files']}</td>"
                     f"<td class='n'>{s['lines']}</td><td class='n'>{s['keys']}</td>"
                     f"<td class='n'>{s['priors']}</td><td class='n'>{err}</td></tr>")
-    overview = ("<h2>Sources</h2><table class='grid'><tr><th>Repo</th><th>Kind"
+    overview = ("<h2 id='sources'>Sources</h2><table class='grid'><tr><th>Repo</th><th>Kind"
                 "</th><th>Files</th><th>Lines</th><th>Keys</th><th>Priors</th>"
                 "<th>Unparseable</th></tr>" + "".join(rows) + "</table>")
     ov_rows = []
@@ -1317,7 +1310,7 @@ def _render_html_index(snap: dict) -> str:
     override = ""
     if ov_rows:
         override = (
-            "<h2>Override map</h2><p class='muted'>Each workspace file against "
+            "<h2 id='overrides'>Override map</h2><p class='muted'>Each workspace file against "
             "the same path across its library stack, in autonerves lookup "
             "order (e.g. lens → galaxy → array → fit). <span class='chip y'>"
             "differs</span> the workspace changes the value the libraries give; "
@@ -1330,7 +1323,7 @@ def _render_html_index(snap: dict) -> str:
     tooling = [f for f in files if f.get("tooling")]
     tool_html = ""
     if tooling:
-        tool_html = ("<h2>Workspace tooling</h2><p class='muted'>"
+        tool_html = ("<h2 id='tooling'>Workspace tooling</h2><p class='muted'>"
                      "<code>build/</code> lists for CI and the release build — "
                      "workspace-local, not library settings.</p><ul>" + "".join(
                          f"<li><a href=\"repos/{_esc(f['repo'])}.html#"
@@ -1339,7 +1332,7 @@ def _render_html_index(snap: dict) -> str:
                          for f in tooling) + "</ul>")
     env_html = ""
     if snap.get("env_vars"):
-        env_html = ("<h2>Environment variables</h2><p class='muted'>The "
+        env_html = ("<h2 id='environment'>Environment variables</h2><p class='muted'>The "
                     "<code>PYAUTO_*</code> switches autonerves reads — options "
                     "that live outside the YAML.</p><table class='grid'>"
                     "<tr><th>Variable</th><th>What it does</th></tr>" + "".join(
@@ -1349,7 +1342,7 @@ def _render_html_index(snap: dict) -> str:
                         for e in snap["env_vars"]) + "</table>")
     problems = ""
     if parse_errors(snap):
-        problems = ("<h2>Unparseable files</h2><ul>" + "".join(
+        problems = ("<h2 id='problems'>Unparseable files</h2><ul>" + "".join(
             f"<li><a href=\"repos/{_esc(f['repo'])}.html#{slug(f['path'])}\">"
             f"{_esc(f['repo'])}/{_esc(f['path'])}</a> — <span class='errline'>"
             f"{_esc(f['error'])}</span></li>" for f in parse_errors(snap))
@@ -1370,11 +1363,11 @@ def _render_html_index(snap: dict) -> str:
                           f"{_esc(lib)}</b> — {len(keys)} key"
                           f"{'s' if len(keys) != 1 else ''}</summary>"
                           f"<ul class='hits'>{lis}</ul></details>")
-        unused_html = ("<h2>Possibly unused config keys</h2><p class='muted'>"
+        unused_html = ("<h2 id='unused'>Possibly unused config keys</h2><p class='muted'>"
                        + _esc(UNUSED_CAVEAT).replace("`", "").replace("*", "") + "</p>"
                        + "".join(groups))
     elif snap.get("lookups"):
-        unused_html = ("<h2>Possibly unused config keys</h2><p class='muted'>"
+        unused_html = ("<h2 id='unused'>Possibly unused config keys</h2><p class='muted'>"
                        "none — every library settings key is read.</p>")
     errors = ""
     if snap.get("errors"):
@@ -1388,13 +1381,25 @@ def _render_html_index(snap: dict) -> str:
     gh_link = f' · <a href="{gh}">GitHub</a>' if gh else ""
     lede = ("Every config file and option across the libraries and the "
             "workspaces that override them — read-only.")
-    body = f"""{t_.hero(BOARD_KEY, "Board", lede)}
+    navigation = [
+        {"href": "#search", "label": "Search keys", "count": sum(len(f["keys"]) for f in files)},
+        {"href": "#sources", "label": "Sources", "count": len(found)},
+    ]
+    for target, label, count, present in [
+        ("overrides", "Overrides", len(ov), override),
+        ("unused", "Possibly unused", sum(len(v) for v in unused.values()), unused_html),
+        ("problems", "Unparseable files", len(parse_errors(snap)), problems),
+        ("environment", "Environment variables", len(snap.get("env_vars") or []), env_html),
+        ("tooling", "Workspace tooling", len(tooling), tool_html),
+    ]:
+        if present:
+            navigation.append({"href": "#" + target, "label": label, "count": count})
+    body = f"""{t_.hero(BOARD_KEY, "Board", lede, navigation=navigation)}
 <p class="verdict {tone}"><b class="{tone}">{st.upper()}</b>
 <span class="muted">{_esc(_summary(snap))}</span></p>
-{stats}
 <p class="muted"><a href="dashboard.md">markdown version</a> ·
 <a href="board.json">board.json</a>{gh_link}</p>
-<h2>Search</h2>
+<h2 id='search'>Search</h2>
 <input id="q" type="search" placeholder="search keys, files and comments…"
  oninput="flt(this.value)" autocomplete="off">
 <p id="hitinfo" class="muted"></p>
@@ -1504,7 +1509,7 @@ def _render_html_repo(snap: dict, name: str) -> str:
         groups.setdefault(d, []).append(f)
     parts = []
     for d in sorted(groups, key=lambda g: (g != "(top level)", g)):
-        parts.append(f"<div class='group'><h2>{_esc(d)} <span class='muted'>"
+        parts.append(f"<div class='group' id='group-{slug(d)}'><h2>{_esc(d)} <span class='muted'>"
                      f"({len(groups[d])})</span></h2>" + "".join(
                          _file_html(snap, f, ovs.get(f["path"]))
                          for f in groups[d]) + "</div>")
@@ -1513,7 +1518,11 @@ def _render_html_repo(snap: dict, name: str) -> str:
     gh = (f' · <a href="https://github.com/{_esc(src["github"])}/tree/main/'
           f'{_esc(src["config"])}">GitHub</a>' if src.get("github") else "")
     lede = f"{_esc(name)} · <code>{_esc(src['config'])}/</code>"
-    body = f"""{t_.hero(BOARD_KEY, "Board", lede)}
+    navigation = [{"href": "../index.html", "label": "All sources"},
+                  {"href": "#pfilter", "label": "Filter files", "count": len(files)}]
+    navigation.extend({"href": "#group-" + slug(d), "label": d, "count": len(groups[d])}
+                      for d in sorted(groups, key=lambda g: (g != "(top level)", g)))
+    body = f"""{t_.hero(BOARD_KEY, "Board", lede, navigation=navigation)}
 <p class="muted"><a href="../index.html">← all sources</a> · {src.get('kind')} ·
 {len(files)} files · {src.get('lines', 0)} lines{stack}{gh}</p>
 <input id="pfilter" type="search" placeholder="filter {len(files)} files by path or key…"

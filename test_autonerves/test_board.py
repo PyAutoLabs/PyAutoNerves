@@ -211,7 +211,7 @@ def make_tree(tmp_path):
 
 FAKE_THEME = types.SimpleNamespace(
     css=lambda key: "body{}",
-    hero=lambda key, kind, lede="": f"<header class='hero'>{kind} {lede}</header>",
+    hero=lambda key, kind, lede="", *, navigation=(): f"<header class='hero'>{kind} {lede}</header>",
     stats=lambda *pairs: "".join(f"<b>{n}</b>{label}" for n, label in pairs),
     board_links=lambda base, current=None: {"mind": f"{base}/Mind/"},
     boards_footer=lambda links, current: "<ul class='boards'></ul>",
