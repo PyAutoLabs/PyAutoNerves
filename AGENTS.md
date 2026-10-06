@@ -184,3 +184,16 @@ body and hands them to the human (sessions cannot create Discussions). Only the
 development flow — Mind prompt → `/start_dev` → `/create_issue` → one issue per
 task → PR — opens issues here. Why: `PyAutoMind/policy/community_surface.md`.
 <!-- repos_sync:filing:end -->
+
+<!-- repos_sync:standards:begin -->
+## Shared standards
+
+Before changing a shared interface, consult the applicable
+[organism standard](https://github.com/PyAutoLabs/PyAutoBrain/blob/main/docs/standards.md)
+on demand, identify affected consumers, and validate their adoption. Change
+generated guidance at its canonical source and regenerate.
+
+For board changes, follow the applicable sizing, navigation and orchestration
+standards and reuse Brain’s shared components. Keep domain data, prompt meaning
+and approval boundaries with the board’s owner.
+<!-- repos_sync:standards:end -->
