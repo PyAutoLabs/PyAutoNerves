@@ -210,6 +210,7 @@ def make_tree(tmp_path):
 
 
 FAKE_THEME = types.SimpleNamespace(
+    prompt_heading=lambda key: '<h2 class="prompt-heading">Check your <strong>Nerves</strong> for config drift</h2>',
     css=lambda key: "body{}",
     hero=lambda key, kind, lede="", *, navigation=(): f"<header class='hero'>{kind} {lede}</header>",
     stats=lambda *pairs: "".join(f"<b>{n}</b>{label}" for n, label in pairs),

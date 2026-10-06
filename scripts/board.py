@@ -1395,6 +1395,7 @@ def _render_html_index(snap: dict) -> str:
         if present:
             navigation.append({"href": "#" + target, "label": label, "count": count})
     body = f"""{t_.hero(BOARD_KEY, "Board", lede, navigation=navigation)}
+{t_.prompt_heading("nerves")}
 <p class="verdict {tone}"><b class="{tone}">{st.upper()}</b>
 <span class="muted">{_esc(_summary(snap))}</span></p>
 <p class="muted"><a href="dashboard.md">markdown version</a> ·
