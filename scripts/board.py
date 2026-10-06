@@ -75,6 +75,8 @@ from pathlib import Path
 import yaml
 
 NERVES_HOME = Path(__file__).resolve().parents[1]
+CHECKIN_PROMPT = 'Review configuration work across the Nerves board in this chat. Read PyAutoNerves/AGENTS.md and inspect the relevant source repositories, YAML parse errors, option documentation, override relationships and scan coverage. Give a concise priority order and propose one bounded next step. Apply my direction while preserving the overall review. Treat possibly-unused keys as static scan hints, not permission to remove them. Route edits through the development workflow and preserve downstream API validation and human gates.'
+
 BOARD_KEY = "nerves"  # this board's entry in the Brain's palette table
 SCHEMA_VERSION = 1
 STATE_ITEMS_MAX = 20
@@ -1394,8 +1396,18 @@ def _render_html_index(snap: dict) -> str:
     ]:
         if present:
             navigation.append({"href": "#" + target, "label": label, "count": count})
+    work_links = []
+    if repo_url(snap):
+        work_links.append({"label": "Nerves repository", "href": repo_url(snap)})
+    for source in snap.get("sources") or []:
+        work_slug = source.get("github") or ""
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", work_slug):
+            work_links.append({"label": source["repo"] + " repository",
+                               "href": "https://github.com/" + work_slug})
+    panel = t_.orchestration_panel("nerves", "", "", CHECKIN_PROMPT,
+                                   organ="nerves", work_links=work_links)
     body = f"""{t_.hero(BOARD_KEY, "Board", lede, navigation=navigation)}
-{t_.prompt_heading("nerves")}
+{panel}
 <p class="verdict {tone}"><b class="{tone}">{st.upper()}</b>
 <span class="muted">{_esc(_summary(snap))}</span></p>
 <p class="muted"><a href="dashboard.md">markdown version</a> ·

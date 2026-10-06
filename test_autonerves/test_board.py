@@ -210,6 +210,7 @@ def make_tree(tmp_path):
 
 
 FAKE_THEME = types.SimpleNamespace(
+    orchestration_panel=lambda key, title, description, prompt, **kwargs: "<section data-orchestration-panel>" + prompt + "</section>",
     prompt_heading=lambda key: '<h2 class="prompt-heading">Check your <strong>Nerves</strong> for config drift</h2>',
     css=lambda key: "body{}",
     hero=lambda key, kind, lede="", *, navigation=(): f"<header class='hero'>{kind} {lede}</header>",
@@ -624,3 +625,18 @@ def test_unused_keys_are_one_info_item_per_library_never_yellow(usnap):
                  overrides=[dict(o, workspace_only=[])
                             for o in usnap["overrides"]])
     assert board.to_state(clean)["status"] == "green"
+
+
+def test_panel_routes_all_sources_and_keeps_scan_caution(snap, monkeypatch):
+    captured = {}
+    def panel(key, title, description, prompt, **kwargs):
+        captured.update(kwargs, prompt=prompt)
+        return "<section data-orchestration-panel></section>"
+    monkeypatch.setattr(FAKE_THEME, "orchestration_panel", panel)
+    rendered = board.render(snap, "html-index")
+    assert rendered.index("data-orchestration-panel") < rendered.index("id='search'")
+    assert captured["organ"] == "nerves"
+    assert {link["href"] for link in captured["work_links"]} == {
+        "https://github.com/SomeOrg/PyAutoNerves", "https://github.com/SomeOrg/LibLow",
+        "https://github.com/SomeOrg/LibHigh", "https://github.com/SomeOrg/ws_demo"}
+    assert "not permission to remove" in captured["prompt"]
