@@ -210,6 +210,7 @@ def make_tree(tmp_path):
 
 
 FAKE_THEME = types.SimpleNamespace(
+    section_layout=lambda page, summaries=None: page,
     orchestration_panel=lambda key, title, description, prompt, **kwargs: "<section data-orchestration-panel>" + prompt + "</section>",
     prompt_heading=lambda key: '<h2 class="prompt-heading">Check your <strong>Nerves</strong> for config drift</h2>',
     css=lambda key: "body{}",
