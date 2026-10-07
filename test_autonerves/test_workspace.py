@@ -29,7 +29,26 @@ def test_mismatch_via_version_txt_raises(tmp_path):
 
 
 def test_missing_sources_warns(tmp_path):
+    (tmp_path / "config").mkdir()
     with pytest.warns(UserWarning, match="workspace_version_check: False"):
+        check_version("2026.7.22.1", workspace_root=tmp_path)
+
+
+def test_missing_sources_without_config_dir_is_silent(tmp_path):
+    """A plain directory with no ``config/`` (e.g. a data directory a user
+    runs a script from) is not a workspace -- importing a library from there
+    must not warn that the "workspace" version cannot be verified."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        check_version("2026.7.22.1", workspace_root=tmp_path)
+
+
+def test_config_dir_without_general_yaml_or_version_txt_warns(tmp_path):
+    """A ``config/`` directory marks a workspace; one with no version floor
+    anywhere is misconfigured and still warns."""
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "visualize.yaml").write_text("")
+    with pytest.warns(UserWarning, match="Cannot verify the workspace"):
         check_version("2026.7.22.1", workspace_root=tmp_path)
 
 

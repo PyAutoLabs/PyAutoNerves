@@ -107,8 +107,28 @@ def _is_source_checkout(root):
     false positive, since a source checkout is not a workspace and records
     no version floor to verify. Workspace clones ship neither file, so a
     genuine workspace missing its version keys still warns.
+
+    The companion skip for directories that are not a workspace at all (a
+    plain data directory a user runs a script from) is
+    ``_looks_like_workspace``.
     """
     return (root / "setup.py").exists() or (root / "pyproject.toml").exists()
+
+
+def _looks_like_workspace(root):
+    """
+    True when ``root`` has a ``config/`` directory, which every PyAuto
+    workspace ships.
+
+    ``check_version`` defaults ``workspace_root`` to the current working
+    directory, so a plain script run from a data directory would otherwise
+    warn "Cannot verify the workspace ..." on every library import even
+    though no workspace is involved. Only the directory itself is inspected
+    -- there is deliberately no walk-up to a parent, which could pick up an
+    unrelated ``config/`` -- so a workspace script run from a subdirectory
+    is also treated as outside a workspace (silent, floor unchecked).
+    """
+    return (root / "config").is_dir()
 
 
 def _library_name_from_workspace(workspace_root):
@@ -196,11 +216,13 @@ def check_version(library_version, workspace_root=None):
     Versions that cannot be parsed as date versions (e.g. development
     installs) warn on inequality rather than raising.
 
-    If no floor source is found, a warning is emitted and the check is
-    skipped — unless ``workspace_root`` is a package source checkout
-    (``setup.py``/``pyproject.toml`` at its top level), in which case the
-    check is skipped silently: running from inside a library's own repo is
-    not a workspace-compatibility question at all.
+    If no floor source is found, the check is skipped. It is skipped
+    silently when ``workspace_root`` is not a workspace at all: either a
+    package source checkout (``setup.py``/``pyproject.toml`` at its top
+    level — running from inside a library's own repo) or a directory with
+    no ``config/`` (e.g. a plain data directory a user runs a script from).
+    Otherwise — a ``config/`` directory with no version keys and no
+    ``version.txt``, i.e. a misconfigured workspace — a warning is emitted.
 
     The check can be disabled in two ways:
 
@@ -235,7 +257,7 @@ def check_version(library_version, workspace_root=None):
             floor_version = version_file.read_text().strip()
 
     if floor_version is None or floor_version == "":
-        if _is_source_checkout(root):
+        if _is_source_checkout(root) or not _looks_like_workspace(root):
             return
         _warn_once(_missing_version_warning(root, library_version))
         return
