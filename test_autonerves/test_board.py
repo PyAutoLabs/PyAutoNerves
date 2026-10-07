@@ -639,4 +639,5 @@ def test_panel_routes_all_sources_and_keeps_scan_caution(snap, monkeypatch):
     assert {link["href"] for link in captured["work_links"]} == {
         "https://github.com/SomeOrg/PyAutoNerves", "https://github.com/SomeOrg/LibLow",
         "https://github.com/SomeOrg/LibHigh", "https://github.com/SomeOrg/ws_demo"}
-    assert "not permission to remove" in captured["prompt"]
+    assert "Treat possibly unused keys as investigation leads" in captured["prompt"]
+    assert "check compatibility and downstream use before proposing removal or renaming" in captured["prompt"]

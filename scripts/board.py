@@ -75,7 +75,36 @@ from pathlib import Path
 import yaml
 
 NERVES_HOME = Path(__file__).resolve().parents[1]
-CHECKIN_PROMPT = 'Review configuration work across the Nerves board in this chat. Read PyAutoNerves/AGENTS.md and inspect the relevant source repositories, YAML parse errors, option documentation, override relationships and scan coverage. Give a concise priority order and propose one bounded next step. Apply my direction while preserving the overall review. Treat possibly-unused keys as static scan hints, not permission to remove them. Route edits through the development workflow and preserve downstream API validation and human gates.'
+CHECKIN_PROMPT = (
+    "Use this chat as an ongoing place to understand and improve configuration across "
+    "PyAutoLabs. Read PyAutoNerves/AGENTS.md and the current Nerves board, then inspect the "
+    "relevant source repositories and configuration evidence. Check scan freshness and "
+    "coverage, keeping unavailable sources explicit.\n\n"
+    "When I give no particular direction, review configuration sources, workspace overrides, "
+    "YAML parse errors, orphan keys, possibly unused options, environment variables and "
+    "documentation gaps. Summarize the findings that need attention and recommend priorities "
+    "with reasons.\n\n"
+    "When I name an option, file, workspace or question, make that the main focus. Help me "
+    "find a setting, explain its purpose and default, trace where it is read, understand "
+    "override precedence or establish which value applies in a particular context. Bring in "
+    "related configuration where relevant; do not repeat the full board review on every "
+    "follow-up.\n\n"
+    "Ground explanations in configuration definitions and the code that consumes them. "
+    "Distinguish what static scanning suggests from behavior verified at runtime. Treat "
+    "possibly unused keys as investigation leads, and check compatibility and downstream use "
+    "before proposing removal or renaming.\n\n"
+    "Help me plan configuration changes, improve option documentation, resolve inconsistent "
+    "defaults or investigate serialization and version-handshake problems. Identify affected "
+    "libraries and workspaces, explain migration needs and define how the resulting behavior "
+    "should be verified.\n\n"
+    "Route accepted changes through the development workflow, checking existing tasks and "
+    "claims first. Carry clearly authorized work through its procedure, retaining approvals "
+    "already given in this conversation. Preserve downstream API validation and applicable "
+    "approval requirements.\n\n"
+    "After changes, refresh the relevant evidence and report what changed, what was verified "
+    "and what remains unresolved. Keep this conversation available for subsequent "
+    "configuration questions and work."
+)
 
 BOARD_KEY = "nerves"  # this board's entry in the Brain's palette table
 SCHEMA_VERSION = 1
