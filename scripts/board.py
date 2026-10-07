@@ -1255,7 +1255,7 @@ def _page(snap: dict, title: str, body: str, js: str, depth: int = 0) -> str:
     if owner and hasattr(t_, "board_links"):
         footer = t_.boards_footer(t_.board_links(f"https://{owner}.github.io",
                                                  BOARD_KEY), BOARD_KEY)
-    return f"""<!doctype html>
+    return t_.section_layout(f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_esc(title)}</title>
@@ -1269,7 +1269,7 @@ every library and workspace · read-only · generated
 {_esc(snap.get('generated') or '?')}.</footer>
 <script>{t_.JS}{js}</script>
 </body></html>
-"""
+""")
 
 
 def key_index(snap: dict) -> dict:
