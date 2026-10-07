@@ -641,3 +641,20 @@ def test_panel_routes_all_sources_and_keeps_scan_caution(snap, monkeypatch):
         "https://github.com/SomeOrg/LibHigh", "https://github.com/SomeOrg/ws_demo"}
     assert "Treat possibly unused keys as investigation leads" in captured["prompt"]
     assert "check compatibility and downstream use before proposing removal or renaming" in captured["prompt"]
+
+
+def test_panel_uses_collection_time_and_owner_refresh(snap, monkeypatch):
+    captured = {}
+    def panel(*args, **kwargs):
+        captured.update(kwargs)
+        return ""
+
+    monkeypatch.setattr(FAKE_THEME, "orchestration_panel", panel)
+
+    snap["generated"] = "2026-10-07T09:00:00Z"
+    board.render(snap, 'html-index')
+    assert captured["refreshed_at"] == snap["generated"]
+    assert captured["refresh_url"] == "https://github.com/SomeOrg/PyAutoNerves/actions/workflows/nerves_board.yml"
+    snap["errors"] = ["source collection failed"]
+    board.render(snap, "html-index")
+    assert captured["refreshed_at"] is None

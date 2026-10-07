@@ -1434,7 +1434,11 @@ def _render_html_index(snap: dict) -> str:
             work_links.append({"label": source["repo"] + " repository",
                                "href": "https://github.com/" + work_slug})
     panel = t_.orchestration_panel("nerves", "", "", CHECKIN_PROMPT,
-                                   organ="nerves", work_links=work_links)
+                                   organ="nerves", work_links=work_links,
+                                   refreshed_at=(snap.get("generated")
+                                                 if not snap.get("errors") else None),
+                                   refresh_url=(repo_url(snap) + "/actions/workflows/nerves_board.yml")
+                                   if repo_url(snap) else None)
     body = f"""{t_.hero(BOARD_KEY, "Board", lede, navigation=navigation)}
 {panel}
 <p class="verdict {tone}"><b class="{tone}">{st.upper()}</b>
