@@ -108,6 +108,36 @@ class TestCheckJaxUsingGpu:
 
 
 class TestRegistry:
+    @pytest.mark.parametrize("project", tuple(setup_colab._PROJECTS))
+    def test_colab_installs_cpu_nufft_for_array_stacks(self, project, monkeypatch, tmp_path):
+        """Exercise the no-deps install command, where a missing package stays missing."""
+        from autonerves import conf
+        from packaging.requirements import Requirement
+
+        google = types.ModuleType("google")
+        google.__path__ = []
+        google.colab = types.ModuleType("google.colab")
+        monkeypatch.setitem(sys.modules, "google", google)
+        monkeypatch.setitem(sys.modules, "google.colab", google.colab)
+        monkeypatch.setenv("XLA_FLAGS", "")
+        monkeypatch.chdir(tmp_path)
+        with mock.patch.object(subprocess, "check_call") as install, \
+                mock.patch.object(setup_colab, "check_jax_using_gpu", return_value=False), \
+                mock.patch.object(setup_colab, "_clone_workspace"), \
+                mock.patch.object(conf.instance, "push"):
+            setup_colab.setup(project, workspace_dir=str(tmp_path))
+
+        command = install.call_args.args[0]
+        assert command[:4] == [sys.executable, "-m", "pip", "install"]
+        assert command[-1] == "--no-deps"
+        requirements = {r.name: r for r in map(Requirement, command[4:-1])}
+        if "autoarray" in requirements:
+            assert "finufft" in requirements, project
+            assert requirements["finufft"].specifier.contains("2.4.0")
+            assert not requirements["finufft"].specifier.contains("2.3.0")
+        else:
+            assert "finufft" not in requirements, project
+
     def test_all_projects_have_required_fields(self):
         required = {
             "project_name",

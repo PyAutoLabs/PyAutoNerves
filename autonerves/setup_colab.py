@@ -75,7 +75,10 @@ _SHARED_EXTRAS = [
 ]
 
 _AUTOFIT_STACK = ["autonerves", "autofit"]
-_AUTOGALAXY_STACK = _AUTOFIT_STACK + ["autoarray", "autogalaxy"]
+# AutoArray's CPU NUFFT backend is not supplied by Colab. The bootstrap uses
+# --no-deps, so array-based projects must install it explicitly; the floor
+# matches AutoArray's Linux requirement.
+_AUTOGALAXY_STACK = _AUTOFIT_STACK + ["autoarray", "autogalaxy", "finufft>=2.4.0"]
 _AUTOLENS_STACK = _AUTOGALAXY_STACK + ["autolens"]
 
 # One entry per Colab-enabled notebook repository. ``top_package`` is the
