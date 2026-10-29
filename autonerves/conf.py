@@ -117,6 +117,9 @@ class Config:
 
         self.output_path = output_path
 
+        # The site layer (`push_site`): facts about the computing site, or None.
+        self.site = None
+
     @property
     def dict(self):
         """
@@ -274,6 +277,26 @@ class Config:
             self.configs = [new_config] + configs
 
         self.configure_logging()
+
+    def push_site(self, name: Union[str, Path]):
+        """
+        Load the site layer ``name`` (``autonerves.site_config``): the partitions and
+        energy constants of a computing site, from ``site/<name>.yaml`` in the first
+        config directory that has one, else the copy shipped with autonerves
+        (``autonerves/site/``). ``name`` may also be a path to a site file.
+
+        The validated ``Site`` is kept as ``self.site`` and returned.
+
+        Raises
+        ------
+        SiteConfigException
+            If no site file is found or it is invalid.
+        """
+        from autonerves.site_config import load_site, site_path
+
+        self.site = load_site(site_path(str(name), config_paths=self.paths))
+        logger.debug(f"Pushed site {self.site.name} from {self.site.source}")
+        return self.site
 
     def register(self, file: str):
         """

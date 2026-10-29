@@ -1,0 +1,32 @@
+# RAL (Rutherford Appleton Laboratory) Slurm cluster used for the Euclid strong-lens work.
+# Loaded by `conf.instance.push_site("ral")`; see autonerves/site_config.py for the schema.
+#
+# Values marked `unverified: true` have not been confirmed against the cluster
+# (`scontrol show config`, `scontrol show partition`, `lscpu` on a compute node) and are
+# used as ranges until a human confirms them; `value: null` means not yet known.
+name: ral
+partitions:
+  ral:
+    gpu_only: false
+    cores_per_node: {value: null, unverified: true}
+    mem_per_node_mb: {value: null, unverified: true}
+    max_time: {value: null, unverified: true}
+    max_array_size: {value: 1001, unverified: true}   # Slurm's default MaxArraySize; DR1 runs 1000-task parts.
+    tdp_w_per_cpu: {low: 2.8, central: 3.5, high: 4.4, unverified: true}  # EPYC 9754 / 9654 / 7763 candidates, per Slurm CPU.
+    cpu_is_thread: {value: true, unverified: true}
+    note: Bulk CPU arrays go here, even when it is busy.
+  gpu:
+    gpu_only: true   # Human rule 2026-09-30: CPU-only arrays never go on gpu (nor ral,gpu / gpu,ral); they starved the A100s.
+    cores_per_node: {value: 62, unverified: true}     # 124 CPUs across euclid-ral-gpu-1/-2.
+    mem_per_node_mb: {value: null, unverified: true}
+    max_time: {value: null, unverified: true}
+    max_array_size: {value: 1001, unverified: true}
+    tdp_w_per_cpu: {low: 2.8, central: 3.5, high: 4.4, unverified: true}
+    cpu_is_thread: {value: true, unverified: true}
+    gpu_model: A100
+    gpu_tdp_w: {low: 250, central: 300, high: 400, unverified: true}  # PCIe 250/300 W or SXM 400 W; measure with NVML.
+    note: 8 A100s on two nodes (4 per node, unverified).
+pue: {low: 1.14, central: 1.31, high: 1.45, unverified: true}  # R89 measured 1.28-1.45 (mean 1.31); new centre ~1.14; hosting building unverified.
+grid_region: GB
+ci_basis: {value: location_annual_average, unverified: true}
+energy_accounting: {value: false, unverified: true}  # Slurm AcctGatherEnergyType not confirmed.
