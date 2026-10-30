@@ -146,3 +146,69 @@ def test_nerves_imports_no_autofit():
         "assert not [m for m in sys.modules if m.split('.')[0] == 'autofit'], 'autofit'"
     )
     subprocess.run([sys.executable, "-c", code], check=True, cwd=Path(conf.__file__).parents[1])
+
+
+def test_ral_carbon_intensity_bases(config):
+    site = config.push_site("ral")
+
+    assert site.ci_basis == "regional"
+    assert site.ci().central == 188
+    assert site.ci().range == (81, 308)
+    assert site.ci("national").central == 129
+    assert site.ci("desnz").central == 177
+    assert site.ci("absent") is None
+    assert {"carbon_intensity.regional", "carbon_intensity.desnz"} <= set(
+        site.unverified()
+    )
+
+
+def test_carbon_intensity_is_optional():
+    assert validate(VALID) == []
+    site = load_site_from(VALID)
+    assert site.carbon_intensity == {}
+    assert site.ci() is None
+
+
+def test_carbon_intensity_validation():
+    def errors(table, basis="regional"):
+        return validate({**VALID, "ci_basis": basis, "carbon_intensity": table})
+
+    assert errors({"regional": {"low": 80, "central": 190, "high": 310}}) == []
+    assert errors({"regional": 190, "national": {"value": 130}}) == []
+    assert any("not a carbon_intensity basis" in e for e in errors({"national": 130}))
+    assert any("negative" in e for e in errors({"regional": -5}))
+    assert any("must be a number" in e for e in errors({"regional": "high"}))
+    assert any("low 300 is above high" in e for e in errors({"regional": {"low": 300, "high": 100}}))
+    assert any("at least one basis" in e for e in errors({}))
+    assert any(
+        "name the carbon_intensity basis" in e
+        for e in validate({k: v for k, v in VALID.items() if k != "ci_basis"} | {"carbon_intensity": {"x": 1}})
+    )
+
+
+def load_site_from(raw):
+    from autonerves.site_config import Site
+
+    return Site(dict(raw))
+
+
+def test_ci_basis_basis_must_have_a_value():
+    errors = validate(
+        {
+            **VALID,
+            "ci_basis": "regional",
+            "carbon_intensity": {"regional": {"value": None, "unverified": True}, "national": 129},
+        }
+    )
+    assert any("carbon_intensity.regional: the ci_basis basis needs a value" in e for e in errors)
+    # Another basis may be empty: only the one used centrally must have a value.
+    assert (
+        validate(
+            {
+                **VALID,
+                "ci_basis": "national",
+                "carbon_intensity": {"regional": {"value": None, "unverified": True}, "national": 129},
+            }
+        )
+        == []
+    )

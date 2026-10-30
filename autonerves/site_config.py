@@ -23,7 +23,11 @@ and carbon estimate needs, in the vocabulary of GA4HPC's ``cluster_info.yaml``:
         gpu_tdp_w: {low: 250, high: 400, unverified: true}
     pue: {low: 1.14, central: 1.31, high: 1.45, unverified: true}
     grid_region: GB
-    ci_basis: location_annual_average
+    ci_basis: regional
+    carbon_intensity:             # gCO2e per kWh, one entry per basis
+      regional: {low: 81, central: 188, high: 308, unverified: true}
+      national: {low: 51, central: 129, high: 231, unverified: true}
+      desnz: {value: 177, unverified: true}
     energy_accounting: false
 
 Any value may be written plainly (``gpu_only: true``), as ``{value: ...}`` or as a
@@ -31,6 +35,13 @@ range ``{low: ..., high: ...}`` (with an optional ``central``), and any of these
 carry ``unverified: true``: a constant nobody has confirmed against the site is kept,
 used as a range and reported as unverified, never silently trusted. ``pue`` is always
 a range.
+
+``carbon_intensity`` is optional: the grid's carbon intensity in gCO2e/kWh under one or
+more named bases (e.g. ``regional``, ``national``, ``desnz``), each a value or a range.
+When it is given, ``ci_basis`` names the basis an estimate uses centrally and must be
+one of its keys; the other bases show how far the choice of basis moves the answer. A
+site without the table gives no carbon figure (energy only); nothing falls back to a
+world-average default.
 
 A partition with ``gpu_only: true`` takes GPU jobs only: a planner must never place a
 CPU-only job there (``Site.cpu_partitions`` leaves it out, ``Site.check_cpu_job``
@@ -68,6 +79,7 @@ SITE_FIELDS = {
     "pue": "range",
     "grid_region": "str",
     "ci_basis": "str",
+    "carbon_intensity": "carbon_intensity",
     "energy_accounting": "bool",
     "note": "str",
 }
@@ -191,6 +203,10 @@ class Site:
             for key in ("pue", "grid_region", "ci_basis", "energy_accounting")
             if key in raw
         }
+        self.carbon_intensity = {
+            basis: SiteValue.from_yaml(value)
+            for basis, value in (raw.get("carbon_intensity") or {}).items()
+        }
 
     def partition(self, name: str) -> Partition:
         try:
@@ -236,6 +252,14 @@ class Site:
         value = self.values.get("ci_basis")
         return None if value is None else value.central
 
+    def ci(self, basis: Optional[str] = None) -> Optional[SiteValue]:
+        """
+        The grid carbon intensity (gCO2e/kWh) under ``basis`` (default ``ci_basis``),
+        or ``None`` when the site gives no ``carbon_intensity`` for it.
+        """
+        basis = basis or self.ci_basis
+        return self.carbon_intensity.get(basis) if basis else None
+
     @property
     def energy_accounting(self) -> bool:
         value = self.values.get("energy_accounting")
@@ -246,6 +270,11 @@ class Site:
         The dotted names of every value marked ``unverified``.
         """
         names = [key for key, value in self.values.items() if value.unverified]
+        names += [
+            f"carbon_intensity.{basis}"
+            for basis, value in self.carbon_intensity.items()
+            if value.unverified
+        ]
         for partition in self.partitions.values():
             names += [
                 f"partitions.{partition.name}.{key}"
@@ -350,6 +379,32 @@ def validate(raw) -> List[str]:
         pue = raw["pue"] if isinstance(raw["pue"], dict) else {}
         if isinstance(pue.get("low"), (int, float)) and pue["low"] < 1:
             errors.append("pue: a PUE is at least 1")
+    if "carbon_intensity" in raw:
+        table = raw["carbon_intensity"]
+        if not isinstance(table, dict) or not table:
+            errors.append("carbon_intensity must map at least one basis to a value")
+        else:
+            for basis, value in table.items():
+                where = f"carbon_intensity.{basis}"
+                _check_value(where, "number", value, errors)
+                values = value if isinstance(value, dict) else {"value": value}
+                for key in ("value", "low", "high", "central"):
+                    number = values.get(key)
+                    if isinstance(number, (int, float)) and number < 0:
+                        errors.append(f"{where}.{key} cannot be negative")
+            basis = SiteValue.from_yaml(raw.get("ci_basis")).central
+            if basis is None:
+                errors.append("ci_basis: name the carbon_intensity basis to use")
+            elif basis not in table:
+                errors.append(
+                    f"ci_basis {basis!r} is not a carbon_intensity basis "
+                    f"({sorted(table)})"
+                )
+            elif SiteValue.from_yaml(table[basis]).central is None:
+                errors.append(
+                    f"carbon_intensity.{basis}: the ci_basis basis needs a value "
+                    f"(or a low/high range); it is empty"
+                )
 
     return errors
 

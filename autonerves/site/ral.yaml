@@ -28,5 +28,15 @@ partitions:
     note: 8 A100s on two nodes (4 per node, unverified).
 pue: {low: 1.14, central: 1.31, high: 1.45, unverified: true}  # R89 measured 1.28-1.45 (mean 1.31); new centre ~1.14; hosting building unverified.
 grid_region: GB
-ci_basis: {value: location_annual_average, unverified: true}
+ci_basis: {value: regional, unverified: true}   # Ruling F6 (2026-10-28): regional central, national and DESNZ as bounds.
+# Grid carbon intensity, gCO2e per kWh (hpc-campaign report §1.4, survey carbon.md §4):
+# - regional: NESO Carbon Intensity API, region 12 "South England" (Harwell OX11), 2025 forecast series;
+#   central = annual mean, low/high = half-hourly p5/p95.
+# - national: NESO GB national 2025 actual; central = mean, low/high = half-hourly p5/p95.
+# - desnz: DESNZ 2025 UK company-reporting factor (0.177 kg/kWh; lags the grid by ~2 years).
+# Unverified until a human confirms the hosting building's region and the year to use.
+carbon_intensity:
+  regional: {low: 81, central: 188, high: 308, unverified: true}
+  national: {low: 51, central: 129, high: 231, unverified: true}
+  desnz: {value: 177, unverified: true}
 energy_accounting: {value: false, unverified: true}  # Slurm AcctGatherEnergyType not confirmed.
