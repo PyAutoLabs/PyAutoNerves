@@ -400,6 +400,11 @@ def validate(raw) -> List[str]:
                     f"ci_basis {basis!r} is not a carbon_intensity basis "
                     f"({sorted(table)})"
                 )
+            elif SiteValue.from_yaml(table[basis]).central is None:
+                errors.append(
+                    f"carbon_intensity.{basis}: the ci_basis basis needs a value "
+                    f"(or a low/high range); it is empty"
+                )
 
     return errors
 

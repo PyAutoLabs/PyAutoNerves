@@ -190,3 +190,25 @@ def load_site_from(raw):
     from autonerves.site_config import Site
 
     return Site(dict(raw))
+
+
+def test_ci_basis_basis_must_have_a_value():
+    errors = validate(
+        {
+            **VALID,
+            "ci_basis": "regional",
+            "carbon_intensity": {"regional": {"value": None, "unverified": True}, "national": 129},
+        }
+    )
+    assert any("carbon_intensity.regional: the ci_basis basis needs a value" in e for e in errors)
+    # Another basis may be empty: only the one used centrally must have a value.
+    assert (
+        validate(
+            {
+                **VALID,
+                "ci_basis": "national",
+                "carbon_intensity": {"regional": {"value": None, "unverified": True}, "national": 129},
+            }
+        )
+        == []
+    )
