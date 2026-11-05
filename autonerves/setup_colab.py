@@ -80,6 +80,18 @@ _AUTOFIT_STACK = ["autonerves", "autofit"]
 # matches AutoArray's Linux requirement.
 _AUTOGALAXY_STACK = _AUTOFIT_STACK + ["autoarray", "autogalaxy", "finufft>=2.4.0"]
 _AUTOLENS_STACK = _AUTOGALAXY_STACK + ["autolens"]
+_AUTOCTI_STACK = _AUTOFIT_STACK + ["autoarray", "autocti", "finufft>=2.4.0"]
+
+# arcticpy (the C++ arctic clocking code autocti imports) is a source-only sdist
+# that needs libgsl-dev and a no-build-isolation build, so it cannot ride the
+# `--no-deps` package list. PyAutoHeart's `install_arcticpy.sh` is the single
+# home of that recipe and of the arcticpy version pin (cti-upkeep ruling,
+# 2026-11-04), so Colab runs that script rather than carrying a second copy.
+# Colab runs as root (no sudo) and must build into the notebook's interpreter.
+_ARCTICPY_INSTALLER_URL = (
+    "https://raw.githubusercontent.com/PyAutoLabs/PyAutoHeart/main/"
+    ".github/actions/install-arcticpy/install_arcticpy.sh"
+)
 
 # One entry per Colab-enabled notebook repository. ``top_package`` is the
 # package whose installed version names the workspace tag to clone.
@@ -107,6 +119,15 @@ _PROJECTS = {
         workspace_repo="https://github.com/PyAutoLabs/autolens_workspace",
         workspace_dir="/content/autolens_workspace",
         gpu_note="> 50 times faster",
+    ),
+    "autocti": dict(
+        project_name="PyAutoCTI",
+        top_package="autocti",
+        packages=_AUTOCTI_STACK + _SHARED_EXTRAS,
+        workspace_repo="https://github.com/PyAutoLabs/autocti_workspace",
+        workspace_dir="/content/autocti_workspace",
+        gpu_note="no faster (arctic clocking runs on the CPU)",
+        pre_install="arcticpy",
     ),
     "howtofit": dict(
         project_name="PyAutoFit",
@@ -255,6 +276,21 @@ def _gpu_error_message(project: str, spec: dict) -> str:
     """
 
 
+def _install_arcticpy() -> None:
+    """Build arcticpy on Colab by running PyAutoHeart's installer script."""
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, ARCTICPY_SUDO="false", PYTHON=sys.executable)
+    subprocess.check_call(
+        ["bash", "-c", f'curl -fsSL "{_ARCTICPY_INSTALLER_URL}" | bash'], env=env
+    )
+
+
+_PRE_INSTALLERS = {"arcticpy": _install_arcticpy}
+
+
 def _colab_setup(
     *,
     project_name: str,
@@ -264,6 +300,7 @@ def _colab_setup(
     top_package: str,
     raise_error_if_not_gpu: bool,
     gpu_error_message: str,
+    pre_install: str = None,
 ) -> None:
     """
     Shared Google Colab setup for the PyAuto ecosystem.
@@ -308,6 +345,9 @@ def _colab_setup(
     print()
     print(f"Now Installing {project_name} and setting up Colab Environment:")
 
+    if pre_install is not None:
+        _PRE_INSTALLERS[pre_install]()
+
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", *packages, "--no-deps"]
     )
@@ -347,7 +387,7 @@ def setup(
     Parameters
     ----------
     project
-        One of: "autofit", "autogalaxy", "autolens", "howtofit",
+        One of: "autofit", "autogalaxy", "autolens", "autocti", "howtofit",
         "howtogalaxy", "howtolens".
     raise_error_if_not_gpu
         If True, raise instead of continuing when Colab has no GPU / TPU
@@ -373,6 +413,7 @@ def setup(
         top_package=spec["top_package"],
         raise_error_if_not_gpu=raise_error_if_not_gpu,
         gpu_error_message=_gpu_error_message(project, spec),
+        pre_install=spec.get("pre_install"),
     )
 
 
@@ -389,6 +430,11 @@ def for_autogalaxy(raise_error_if_not_gpu: bool = True) -> None:
 def for_autolens(raise_error_if_not_gpu: bool = True) -> None:
     """Google Colab helper for PyAutoLens (the autolens_workspace)."""
     setup("autolens", raise_error_if_not_gpu=raise_error_if_not_gpu)
+
+
+def for_autocti(raise_error_if_not_gpu: bool = False) -> None:
+    """Google Colab helper for PyAutoCTI (the autocti_workspace)."""
+    setup("autocti", raise_error_if_not_gpu=raise_error_if_not_gpu)
 
 
 def for_howtofit(raise_error_if_not_gpu: bool = False) -> None:

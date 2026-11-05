@@ -138,6 +138,48 @@ class TestRegistry:
         else:
             assert "finufft" not in requirements, project
 
+    @pytest.mark.parametrize("project", tuple(setup_colab._PROJECTS))
+    def test_only_autocti_builds_arcticpy_and_before_the_stack(
+        self, project, monkeypatch, tmp_path
+    ):
+        """arcticpy is a source-only C++ build that cannot ride the --no-deps list.
+
+        autocti runs PyAutoHeart's installer script (the single home of the
+        arcticpy pin) as root into this interpreter, BEFORE the package stack,
+        because `import autocti` needs it. No other project touches it.
+        """
+        from autonerves import conf
+
+        google = types.ModuleType("google")
+        google.__path__ = []
+        google.colab = types.ModuleType("google.colab")
+        monkeypatch.setitem(sys.modules, "google", google)
+        monkeypatch.setitem(sys.modules, "google.colab", google.colab)
+        monkeypatch.setenv("XLA_FLAGS", "")
+        monkeypatch.chdir(tmp_path)
+        with mock.patch.object(subprocess, "check_call") as calls, \
+                mock.patch.object(setup_colab, "check_jax_using_gpu", return_value=False), \
+                mock.patch.object(setup_colab, "_clone_workspace"), \
+                mock.patch.object(conf.instance, "push"):
+            setup_colab.setup(project, workspace_dir=str(tmp_path))
+
+        commands = [c.args[0] for c in calls.call_args_list]
+        builds = [c for c in calls.call_args_list if c.args[0][0] == "bash"]
+        if project != "autocti":
+            assert builds == [], project
+            return
+        assert len(builds) == 1
+        script = builds[0].args[0][2]
+        assert setup_colab._ARCTICPY_INSTALLER_URL in script
+        assert "PyAutoHeart/main/.github/actions/install-arcticpy/" in script
+        assert "arcticpy==" not in script  # the pin lives in Heart, never here
+        env = builds[0].kwargs["env"]
+        assert env["ARCTICPY_SUDO"] == "false"
+        assert env["PYTHON"] == sys.executable
+        assert commands.index(builds[0].args[0]) < len(commands) - 1
+        assert commands[-1][:4] == [sys.executable, "-m", "pip", "install"]
+        assert "autocti" in commands[-1]
+
     def test_all_projects_have_required_fields(self):
         required = {
             "project_name",
@@ -366,6 +408,11 @@ class TestOutsideColab:
             setup_colab.for_autolens(raise_error_if_not_gpu=False)
             setup_mock.assert_called_once_with(
                 "autolens", raise_error_if_not_gpu=False
+            )
+            setup_mock.reset_mock()
+            setup_colab.for_autocti()
+            setup_mock.assert_called_once_with(
+                "autocti", raise_error_if_not_gpu=False
             )
             setup_mock.reset_mock()
             setup_colab.for_howtofit()
