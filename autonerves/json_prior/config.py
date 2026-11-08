@@ -7,6 +7,7 @@ from typing import List, Type, Tuple
 
 import yaml
 
+from autonerves import parse_cache
 from autonerves.directory_config import family
 
 logger = logging.getLogger(__name__)
@@ -149,15 +150,14 @@ class JSONPriorConfig:
 
         config_path = Path(directory)
 
-        for suffix, parser in [
-            ("json", json.load),
-            ("yaml", yaml.safe_load),
-            ("yml", yaml.safe_load),
+        for suffix, load in [
+            ("json", parse_cache.load_json),
+            ("yaml", parse_cache.load_yaml),
+            ("yml", parse_cache.load_yaml),
         ]:
             for file in config_path.rglob(f"*.{suffix}"):
                 parts = file.relative_to(config_path).with_suffix("").parts
-                with open(file) as f:
-                    config_dict[".".join(parts)] = parser(f)
+                config_dict[".".join(parts)] = load(file)
 
         return JSONPriorConfig(config_dict, directory=directory)
 

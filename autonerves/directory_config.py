@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from autonerves import exc
+from autonerves import exc, parse_cache
 
 
 class AbstractConfig(ABC):
@@ -70,8 +70,7 @@ class DictConfig(AbstractConfig):
 
 class YAMLConfig(AbstractConfig):
     def __init__(self, path):
-        with open(path) as f:
-            self._dict = yaml.safe_load(f)
+        self._dict = parse_cache.load_yaml(path)
 
     def _getitem(self, item):
         value = self._dict[item]
