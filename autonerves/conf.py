@@ -8,6 +8,7 @@ from typing import Optional, Union, Dict, MutableMapping
 
 import yaml
 
+from autonerves import parse_cache
 from autonerves.directory_config import (
     RecursiveConfig,
     PriorConfigWrapper,
@@ -168,8 +169,7 @@ class Config:
             path = config.path
             try:
                 if LOGGING_CONFIG_FILE in os.listdir(config.path):
-                    with open(path / LOGGING_CONFIG_FILE) as f:
-                        return yaml.safe_load(f)
+                    return parse_cache.load_yaml(path / LOGGING_CONFIG_FILE)
             except FileNotFoundError:
                 logger.debug(f"No configuration found at path {config.path}")
         return None
