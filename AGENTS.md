@@ -11,30 +11,26 @@ organism map below is generated from `PyAutoMind/repos.yaml`.
 ## The organism map
 
 <!-- repos_sync:map:begin -->
-**You are one organ of the PyAuto organism** — an agentic ecosystem for
-human-led, natural-language software development. The organs below are
-peer repositories; this repo is one of them, not a part of another.
-Canonical boundaries live in `PyAutoBrain/ORGANISM.md`; the full body map
-(every repo, not just organs) is `PyAutoMind/repos.yaml`.
+**You are one peer organ of the PyAuto organism** (human-led, natural-language software development), not a part of another. Boundaries: `PyAutoBrain/ORGANISM.md`; every repo: `PyAutoMind/repos.yaml`.
 
 | Organ | Repo | Role |
 |-------|------|------|
-| **Brain** | PyAutoBrain | Reasoning/orchestration layer; how work is decomposed and routed; the specialist agents. |
-| **Broca** | PyAutoBroca | Assistant evaluation history, upkeep evidence, collection receipts and an operational dashboard. Brain interprets; Mind tracks fixes; public assistants remain independent. |
-| **Mind** | PyAutoMind | Intent, goals, priorities, workflow state; every task starts as a markdown prompt here. |
-| **Cortex** | PyAutoCortex | The Cortex — what is true in the science: the body map (`projects.yaml`) and one ledger per science project (runs, results, learnings, where to pick up); the science mirror of the Mind. |
-| **Memory** | PyAutoMemory | Long-term scientific/software/project knowledge (see science pointer below). |
-| **Eyes** | PyAutoEyes | The Eyes — cross-project visualization dashboard over the `<lib>_visualization` repos: their registry, the `gallery/viz_manifest.yaml` read contract and the Pages board linking their PNGs. Renders and copies nothing, never judges figures (the Brain's Eyes conductor does) and never edits plot code. |
-| **Ears** | PyAutoEars | The Ears — community listening: read-only public conversation collection, the versioned community snapshot contract, coverage receipts and the dashboard. GitHub stays authoritative; Brain's Community conductor judges and drafts replies; never posts, labels, files issues or exports transcripts. |
-| **Heart** | PyAutoHeart | Health/readiness — the authoritative "is it safe to release?" verdict. |
-| **Hands** | PyAutoHands | Packaging, tagging, notebook generation, PyPI release execution. |
-| **Pulse** | PyAutoPulse | The Pulse — cross-project profiling dashboard over the `<lib>_profiling` repos: campaign intent, instance registry, the versioned `profiling-summary` read contract, ingest receipts and the Pages board. Validates the contract only; never judges, scores or issues verdicts (the Brain's profiling conductor judges). |
-| **Insight** | PyAutoInsight | Inference campaign intent, the cross-project inference instance registry, the versioned `inference-summary` read contract, ingest receipts and the evidence dashboard. Projects execute, Cortex records the science, Mind owns task state; never infers scientific acceptance or submits compute. |
-| **DNA** | PyAutoDNA | Software-stack specifications, environment inventory receipts, support rationale, upgrade campaigns and adoption history. Brain coordinates, Heart validates readiness, Hands releases, Nerves enforces runtime compatibility; collection never upgrades environments. |
-| **Nerves** | PyAutoNerves | The Nerves — the configuration/serialization layer connecting workspace conventions to libraries (layered config, version handshake, test_mode), delivered as the `autonerves` package. |
-| **Gut** | PyAutoGut | Lifecycle of condemned self-material (stale branches, stashes, dead code/tests): held as recoverable git refs through a transit window, voided on a sweep. The storage mirror of Memory. |
+| **Brain** | PyAutoBrain | Reasoning and orchestration: decomposes and routes work through its conductors and faculties. |
+| **Broca** | PyAutoBroca | Assistant evaluation history, upkeep evidence and its dashboard. |
+| **Mind** | PyAutoMind | Intent, priorities and workflow state; every task starts as a prompt here. |
+| **Cortex** | PyAutoCortex | What is true in the science: the project body map and one ledger per project. |
+| **Memory** | PyAutoMemory | Long-term scientific, software and project knowledge. |
+| **Eyes** | PyAutoEyes | Cross-project figure dashboard over the `<lib>_visualization` repos. |
+| **Ears** | PyAutoEars | Read-only community listening: conversation snapshots and coverage. |
+| **Heart** | PyAutoHeart | Health/readiness — the authoritative release verdict. |
+| **Hands** | PyAutoHands | Packaging, tagging, notebooks and PyPI release execution. |
+| **Pulse** | PyAutoPulse | Cross-project profiling dashboard over the `<lib>_profiling` repos. |
+| **Insight** | PyAutoInsight | Inference campaign intent, instance registry and evidence dashboard. |
+| **DNA** | PyAutoDNA | Software-stack specifications, environment inventories and upgrade campaigns. |
+| **Nerves** | PyAutoNerves | Configuration/serialization layer (`autonerves`): layered config, version handshake, test_mode. |
+| **Gut** | PyAutoGut | Condemned branches, stashes and dead code, held as recoverable refs until swept. |
 
-Call chain (always this order): **Brain → Heart (gate) → Build (execute)**. Brain agents are **conductors** (front-door; a human drives them; they decide *and* act) or **faculties** (read-only opinions the conductors consult; they judge and stop). New capability grows as a faculty, not a new organ, unless it owns state or effects no existing organ can.
+Call chain: **Brain → Heart (gate) → Build (execute)**. Conductors decide *and* act; faculties judge read-only and stop. New capability grows as a faculty, not an organ, unless it owns state or effects no organ can.
 
 Generated from `PyAutoMind/repos.yaml` + `PyAutoBrain/ORGANISM.md`; edit there, then run `python3 PyAutoMind/scripts/repos_sync.py --write`.
 <!-- repos_sync:map:end -->
