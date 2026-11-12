@@ -153,3 +153,5 @@ repaired; if you pin old family releases, upgrade them together.
 Keep JAX, JAXlib and any CUDA plugin on a mutually compatible version. Use pip's
 resolver rather than `--no-deps`, and verify the resulting environment with
 `python -m pip check`. Existing lockfiles need regeneration to adopt the policy.
+
+<sub><i><a href="https://music.apple.com/us/song/1640464458">sometimes i wanna feel the pain</a></i></sub>
