@@ -205,11 +205,12 @@ def check_jax_using_gpu(log_gpu_warning: bool = True) -> bool:
 #: so it would never upgrade jax by itself; :func:`_ensure_jax_floor` does.
 _JAX_FLOOR = (0, 12, 0)
 _NUMPY_FLOOR = (2, 2, 0)  # jax 0.12 requires numpy>=2.2
-_JAX_SPECS = ["jax>=0.12.0,<0.13", "jaxlib>=0.12.0,<0.13", "numpy>=2.2"]
+_JAX_SPECS = ["jax>=0.12.0,<0.13", "jaxlib>=0.12.0,<0.13"]
+_NUMPY_SPEC = "numpy>=2.2"
 
 
 class ColabRestartRequired(RuntimeError):
-    """Raised after upgrading jax / NumPy in a kernel that already loaded them."""
+    """Raised after upgrading a package (jax or NumPy) this kernel had already loaded."""
 
 
 def _version_tuple(text):
@@ -233,46 +234,58 @@ def _ensure_jax_floor() -> None:
     """
     Upgrade Colab's preinstalled jax / jaxlib / NumPy to the supported range.
 
-    Versions are read from package metadata, never by importing jax, because
-    a jax already imported into the kernel cannot be replaced in place. When an
-    upgrade happens and jax or NumPy is already loaded, raise
-    :class:`ColabRestartRequired` so the user restarts the runtime once and
-    re-runs the setup cell; on that second run the floor is met and setup
-    continues.
+    Versions are read from package metadata, never by importing jax. Only what is
+    below the floor is upgraded: jax and jaxlib together (plus the matching CUDA
+    plugin on a GPU runtime), NumPy only if it is older than 2.2.
+
+    A package already imported into the kernel cannot be replaced in place, so
+    :class:`ColabRestartRequired` is raised only when an UPGRADED package is
+    already loaded. Importing this module loads NumPy but not jax, so on a
+    Colab whose NumPy already meets the floor the upgrade completes without a
+    restart (PyAutoNerves#217). Otherwise the user restarts once and re-runs the
+    setup cell, and on that second run the floor is met.
     """
     import subprocess
 
     jax_v, jaxlib_v, numpy_v = (_dist_version(n) for n in ("jax", "jaxlib", "numpy"))
-    too_old = (
+    jax_old = (
         jax_v is None
         or jaxlib_v is None
         or _version_tuple(jax_v) < _JAX_FLOOR
         or _version_tuple(jaxlib_v) < _JAX_FLOOR
-        or numpy_v is None
-        or _version_tuple(numpy_v) < _NUMPY_FLOOR
     )
-    if not too_old:
+    numpy_old = numpy_v is None or _version_tuple(numpy_v) < _NUMPY_FLOOR
+    if not (jax_old or numpy_old):
         return
 
-    specs = list(_JAX_SPECS)
-    # A GPU runtime carries a CUDA plugin that must match jaxlib exactly.
-    for cuda in ("cuda12", "cuda13"):
-        if _dist_version(f"jax-{cuda}-plugin") is not None:
-            specs += [
-                f"jax-{cuda}-plugin[with-cuda]>=0.12.0,<0.13",
-                f"jax-{cuda}-pjrt>=0.12.0,<0.13",
-            ]
+    specs, upgraded = [], []
+    if jax_old:
+        specs += _JAX_SPECS
+        upgraded += ["jax", "jaxlib"]
+        # A GPU runtime carries a CUDA plugin that must match jaxlib exactly.
+        for cuda in ("cuda12", "cuda13"):
+            if _dist_version(f"jax-{cuda}-plugin") is not None:
+                specs += [
+                    f"jax-{cuda}-plugin[with-cuda]>=0.12.0,<0.13",
+                    f"jax-{cuda}-pjrt>=0.12.0,<0.13",
+                ]
+    if numpy_old:
+        specs.append(_NUMPY_SPEC)
+        upgraded.append("numpy")
 
+    what = " and ".join(n for n, old in (("JAX", jax_old), ("NumPy", numpy_old)) if old)
     print(
-        f"Upgrading JAX for PyAuto (found jax {jax_v}, jaxlib {jaxlib_v}, "
+        f"Upgrading {what} for PyAuto (found jax {jax_v}, jaxlib {jaxlib_v}, "
         f"numpy {numpy_v}; PyAuto needs jax 0.12 and numpy 2.2 or newer)."
     )
     subprocess.check_call([sys.executable, "-m", "pip", "install", *specs])
 
-    if "jax" in sys.modules or "numpy" in sys.modules:
+    loaded = [name for name in upgraded if name in sys.modules]
+    if loaded:
         raise ColabRestartRequired(
-            "JAX and NumPy were upgraded. Restart the runtime "
-            "(Runtime > Restart session) and run this setup cell again."
+            f"{', '.join(loaded)} was upgraded but is already loaded in this "
+            "runtime. Restart the runtime (Runtime > Restart session) and run "
+            "this setup cell again."
         )
 
 
