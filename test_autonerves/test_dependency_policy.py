@@ -1,4 +1,4 @@
-"""Installer contract: exclude the CPU deadlock without discarding older JAX."""
+"""Installer contract: require jax/jaxlib 0.12 (XLA:CPU deadlock on <=0.11.2, PyAutoNerves#213)."""
 from pathlib import Path
 import tomllib
 
@@ -14,11 +14,11 @@ def requirement(request):
 
 
 @pytest.mark.parametrize('version,allowed', [
-    ('0.7.0', True), ('0.9.2', True), ('0.10.0', False), ('0.10.1', False),
-    ('0.10.2', False), ('0.10.99', False), ('0.11.0', False), ('0.11.1', True),
-    ('0.11.2', True), ('0.12.0', False),
+    ('0.7.0', False), ('0.9.2', False), ('0.10.2', False), ('0.11.1', False),
+    ('0.11.2', False), ('0.12.0', True), ('0.12.0.1', True), ('0.12.9', True),
+    ('0.13.0', False),
 ])
-def test_cpu_deadlock_exclusion_keeps_older_versions(requirement, version, allowed):
+def test_jax_and_jaxlib_require_0_12(requirement, version, allowed):
     assert (version in requirement.specifier) is allowed
 
 

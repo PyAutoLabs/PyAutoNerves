@@ -118,26 +118,37 @@ Nothing on the board edits config.
 
 ## JAX compatibility
 
-The package retains JAX/JAXlib `>=0.7,<0.12`, excluding `0.10.*` and `0.11.0`.
-Those excluded releases contain CPU batched LAPACK scheduling that can deadlock
-while materializing a vectorized likelihood (PyAutoHeart#274). The failure was
-captured on 0.10.2; tagged source identifies the same path in the other excluded
-releases. Open-source builds disable it from 0.11.1. This restriction does not
-replace the separate historical FFT/Eigen workaround.
+PyAutoNerves requires **JAX and JAXlib 0.12** (`>=0.12.0,<0.13`). Both are
+pinned, because jax 0.12.0 on its own would still accept the older jaxlib 0.11.2.
 
-The compatibility diagnostics exercise **0.9.2** as an older endpoint and
-**0.11.2** as the recommended validation baseline. They do not certify every
-version permitted by the retained range or promise identical performance across
-versions. A new minimum of 0.11.2 is deliberately avoided: it would unnecessarily
-force newer NumPy/SciPy requirements on users with working older environments.
+Why 0.12: on the CPU, jax 0.11.2 can freeze a likelihood. A call never returns
+and the process sits at 0 % CPU. It happened every time on 4 cores, sometimes on
+8 and never on 16, so laptops, CI runners and small containers are the most
+exposed (PyAutoNerves#213; the evidence is in PyAutoDNA
+`decisions/jax-cpu-policy-2026-11.md`). jax 0.12.0 and 0.12.0.1 ran 30,000 calls
+with no freeze. Part of the fix is upstream (jax-ml/jax#41265, fixed in XLA for
+0.12.0).
 
-Updated family packages require `autonerves>2026.10.4.1` so their resolver cannot
-fall back to a Nerves release without the exclusions. This is a release ordering
-requirement: publish a Nerves wheel containing this policy before the corresponding
-family wheels. No release version is chosen by this bound, and existing published
-wheels are not retroactively repaired. An unpinned family package can still be
-backtracked to an entirely older family release; select the repaired family
-release explicitly when applying the fix to a constrained environment.
+No XLA flag is set for you. On 0.12 none is needed, and the
+`--xla_cpu_multi_thread_eigen=false` flag that hid the problem on 0.11 slows
+pixelized likelihoods by roughly 20-50 %.
+
+What this means for your install:
+
+- **Python** 3.12 or newer (unchanged).
+- **NumPy** 2.2 or newer, because jax 0.12 requires it.
+- **x86-64 CPUs** must be Intel Haswell / AMD equivalent (2013) or newer; jaxlib
+  0.12 wheels use those instructions. Apple Silicon and Linux on ARM are fine.
+- **Intel macOS** still installs without JAX (there are no jaxlib wheels for it)
+  and runs the NumPy path.
+- **Google Colab** ships an older jax. The PyAuto Colab setup cell upgrades jax,
+  jaxlib and NumPy, and asks you to restart the runtime once if they were already
+  loaded.
+
+Updated family packages require a PyAutoNerves newer than `2026.11.9.1`, the last
+release that still allowed jax 0.11, so pip cannot pair them with the old range.
+Publish this Nerves before the family packages. Existing published wheels are not
+repaired; if you pin old family releases, upgrade them together.
 
 Keep JAX, JAXlib and any CUDA plugin on a mutually compatible version. Use pip's
 resolver rather than `--no-deps`, and verify the resulting environment with
