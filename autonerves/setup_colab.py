@@ -200,6 +200,82 @@ def check_jax_using_gpu(log_gpu_warning: bool = True) -> bool:
     return no_gpu
 
 
+#: The JAX floor (PyAutoNerves#215): jax 0.11.x can freeze XLA:CPU likelihoods,
+#: and Colab ships an older jax. The package install below is ``--no-deps``,
+#: so it would never upgrade jax by itself; :func:`_ensure_jax_floor` does.
+_JAX_FLOOR = (0, 12, 0)
+_NUMPY_FLOOR = (2, 2, 0)  # jax 0.12 requires numpy>=2.2
+_JAX_SPECS = ["jax>=0.12.0,<0.13", "jaxlib>=0.12.0,<0.13", "numpy>=2.2"]
+
+
+class ColabRestartRequired(RuntimeError):
+    """Raised after upgrading jax / NumPy in a kernel that already loaded them."""
+
+
+def _version_tuple(text):
+    parts = []
+    for piece in str(text).split(".")[:3]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def _dist_version(name: str):
+    try:
+        from importlib.metadata import version
+
+        return version(name)
+    except Exception:
+        return None
+
+
+def _ensure_jax_floor() -> None:
+    """
+    Upgrade Colab's preinstalled jax / jaxlib / NumPy to the supported range.
+
+    Versions are read from package metadata, never by importing jax, because
+    a jax already imported into the kernel cannot be replaced in place. When an
+    upgrade happens and jax or NumPy is already loaded, raise
+    :class:`ColabRestartRequired` so the user restarts the runtime once and
+    re-runs the setup cell; on that second run the floor is met and setup
+    continues.
+    """
+    import subprocess
+
+    jax_v, jaxlib_v, numpy_v = (_dist_version(n) for n in ("jax", "jaxlib", "numpy"))
+    too_old = (
+        jax_v is None
+        or jaxlib_v is None
+        or _version_tuple(jax_v) < _JAX_FLOOR
+        or _version_tuple(jaxlib_v) < _JAX_FLOOR
+        or numpy_v is None
+        or _version_tuple(numpy_v) < _NUMPY_FLOOR
+    )
+    if not too_old:
+        return
+
+    specs = list(_JAX_SPECS)
+    # A GPU runtime carries a CUDA plugin that must match jaxlib exactly.
+    for cuda in ("cuda12", "cuda13"):
+        if _dist_version(f"jax-{cuda}-plugin") is not None:
+            specs += [
+                f"jax-{cuda}-plugin[with-cuda]>=0.12.0,<0.13",
+                f"jax-{cuda}-pjrt>=0.12.0,<0.13",
+            ]
+
+    print(
+        f"Upgrading JAX for PyAuto (found jax {jax_v}, jaxlib {jaxlib_v}, "
+        f"numpy {numpy_v}; PyAuto needs jax 0.12 and numpy 2.2 or newer)."
+    )
+    subprocess.check_call([sys.executable, "-m", "pip", "install", *specs])
+
+    if "jax" in sys.modules or "numpy" in sys.modules:
+        raise ColabRestartRequired(
+            "JAX and NumPy were upgraded. Restart the runtime "
+            "(Runtime > Restart session) and run this setup cell again."
+        )
+
+
 def _running_in_ipython() -> bool:
     """
     True only when an IPython interactive shell (Jupyter notebook, IPython
@@ -332,6 +408,10 @@ def _colab_setup(
             logger.debug(message)
 
         return
+
+    # Before anything imports jax: Colab's preinstalled jax is older than the
+    # floor, and the --no-deps install below never upgrades it.
+    _ensure_jax_floor()
 
     # JAX performance tweak, applied only on Colab.
     os.environ["XLA_FLAGS"] = _XLA_FLAGS

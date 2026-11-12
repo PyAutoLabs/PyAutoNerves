@@ -44,6 +44,66 @@ def _split_requirement(requirement):
     )
 
 
+_FLOOR_MET = {"jax": "0.12.0.1", "jaxlib": "0.12.0.1", "numpy": "2.3.0"}
+
+
+@pytest.fixture(autouse=True)
+def jax_floor_met(monkeypatch):
+    """
+    Report a jax/jaxlib/NumPy stack that already meets the floor, so the
+    version gate (``_ensure_jax_floor``) is a no-op in every test that is not
+    about it. The tests below override this mapping.
+    """
+    versions = dict(_FLOOR_MET)
+    monkeypatch.setattr(setup_colab, "_dist_version", versions.get)
+    return versions
+
+
+class TestEnsureJaxFloor:
+    def test_floor_met_installs_nothing(self, jax_floor_met):
+        with mock.patch.object(subprocess, "check_call") as check_call:
+            setup_colab._ensure_jax_floor()
+        check_call.assert_not_called()
+
+    @pytest.mark.parametrize("name,old", [
+        ("jax", "0.11.1"), ("jaxlib", "0.11.2"), ("numpy", "2.1.3"),
+    ])
+    def test_old_stack_upgrades_then_asks_for_restart(self, jax_floor_met, monkeypatch, name, old):
+        jax_floor_met[name] = old
+        monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+        with mock.patch.object(subprocess, "check_call") as check_call, \
+                pytest.raises(setup_colab.ColabRestartRequired, match="Restart the runtime"):
+            setup_colab._ensure_jax_floor()
+        args = check_call.call_args.args[0]
+        assert "--no-deps" not in args
+        assert {"jax>=0.12.0,<0.13", "jaxlib>=0.12.0,<0.13", "numpy>=2.2"} <= set(args)
+
+    def test_gpu_runtime_upgrades_its_matching_cuda_plugin(self, jax_floor_met, monkeypatch):
+        jax_floor_met.update(jax="0.11.1", jaxlib="0.11.1")
+        jax_floor_met["jax-cuda12-plugin"] = "0.11.1"
+        monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+        with mock.patch.object(subprocess, "check_call") as check_call, \
+                pytest.raises(setup_colab.ColabRestartRequired):
+            setup_colab._ensure_jax_floor()
+        args = check_call.call_args.args[0]
+        assert "jax-cuda12-plugin[with-cuda]>=0.12.0,<0.13" in args
+        assert "jax-cuda12-pjrt>=0.12.0,<0.13" in args
+        assert not any("cuda13" in a for a in args)
+
+    def test_fresh_process_upgrades_without_restart(self, jax_floor_met, monkeypatch):
+        jax_floor_met["jax"] = "0.11.1"
+        monkeypatch.delitem(sys.modules, "jax", raising=False)
+        monkeypatch.delitem(sys.modules, "numpy", raising=False)
+        with mock.patch.object(subprocess, "check_call") as check_call:
+            setup_colab._ensure_jax_floor()
+        check_call.assert_called_once()
+
+    def test_setup_checks_the_floor_before_importing_jax(self):
+        source = Path(setup_colab.__file__).read_text()
+        body = source[source.index("def _colab_setup("):]
+        assert body.index("_ensure_jax_floor()") < body.index("check_jax_using_gpu(")
+
+
 @pytest.fixture(name="no_ipython")
 def make_no_ipython(monkeypatch):
     """A plain-interpreter run: no IPython module loaded at all."""
