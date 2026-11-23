@@ -5,6 +5,35 @@ logger = logging.getLogger(__name__)
 
 import os
 
+from autonerves.environment import SETUP_ENV_VAR, detect_cores, parse_setup_intent
+
+# PYAUTO_SETUP is read before anything can import JAX, because JAX_PLATFORMS and the
+# thread variables only take effect if set before JAX (and the BLAS / numba thread
+# pools) initialise. An explicit CPU intent ("cpu", or a setup_id whose device token
+# is cpu, e.g. numba_cpu_sparse_fp64) pins JAX to the CPU and sizes the thread pools
+# to the detected cores; "auto", unset and "gpu" set nothing. A value the user has
+# already set is never overwritten. Invalid values raise ValueError naming the
+# allowed forms (see autonerves.environment.parse_setup_intent).
+_setup_intent = parse_setup_intent(os.environ.get(SETUP_ENV_VAR))
+
+if _setup_intent == "cpu":
+    _cores = str(detect_cores())
+    _applied = {}
+    for _key, _value in (
+        ("JAX_PLATFORMS", "cpu"),
+        ("OMP_NUM_THREADS", _cores),
+        ("MKL_NUM_THREADS", _cores),
+        ("OPENBLAS_NUM_THREADS", _cores),
+        ("NUMBA_NUM_THREADS", _cores),
+    ):
+        if _key not in os.environ:
+            os.environ[_key] = _value
+            _applied[_key] = _value
+    logger.info(
+        f"{SETUP_ENV_VAR}={os.environ[SETUP_ENV_VAR]!r} requests CPU: set {_applied} "
+        "(variables already set were left unchanged)."
+    )
+
 if importlib.util.find_spec("jax") is None:
     logger.warning(
         """
@@ -87,23 +116,28 @@ if "--xla_gpu_autotune_level" not in os.environ.get("XLA_FLAGS", ""):
 
 jax_enable_x64 = os.environ.get("JAX_ENABLE_X64")
 
+# Unset -> force x64 on (double precision is the default for the PyAuto stack). An
+# explicit false value ("false", "0") is a deliberate fp32 request and is respected;
+# any other explicit value (e.g. "true", "1") is left to JAX as given.
 if jax_enable_x64 is None:
-    jax_enable_x64 = False
-elif isinstance(jax_enable_x64, str):
-    jax_enable_x64 = jax_enable_x64.lower() == "true"
-
-if not jax_enable_x64:
 
     os.environ["JAX_ENABLE_X64"] = "True"
 
     logger.info(
-        """"
+        """
         JAX 64-bit precision has been automatically enabled for you (JAX_ENABLE_X64=True),
         as double precision is required for most scientific computing applications.
 
-        To enable 64 precision as default in JAX, set the environment variable
-        JAX_ENABLE_X64=true before running your script.
+        To run JAX in 32-bit precision instead, set the environment variable
+        JAX_ENABLE_X64=False before running your script.
         """
+    )
+
+elif jax_enable_x64.strip().lower() in ("false", "0"):
+
+    logger.info(
+        f"JAX_ENABLE_X64={jax_enable_x64!r}: 32-bit (fp32) JAX precision was "
+        "requested and is respected; 64-bit precision is not enabled."
     )
 
 if "JAX_COMPILATION_CACHE_DIR" not in os.environ:

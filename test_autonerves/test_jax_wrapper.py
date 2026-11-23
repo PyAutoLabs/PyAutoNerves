@@ -1,12 +1,16 @@
 """Tests for the env-var handling in autonerves.jax_wrapper.
 
-The wrapper's env logic runs at import time, so each test reloads the module
-under a controlled os.environ. No test imports jax — the wrapper only sets
-environment variables.
+The wrapper's env logic runs at import time, so each in-process test reloads the
+module under a controlled os.environ and does not import jax. The PYAUTO_SETUP and
+JAX_ENABLE_X64 tests at the end import autonerves (and jax) in a fresh subprocess,
+because both only take effect before JAX initialises.
 """
 
 import importlib
+import json
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -23,6 +27,7 @@ def clean_env(monkeypatch):
         "JAX_COMPILATION_CACHE_DIR",
         "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS",
         "XDG_CACHE_HOME",
+        "PYAUTO_SETUP",
     ):
         monkeypatch.delenv(key, raising=False)
     yield monkeypatch
@@ -138,3 +143,112 @@ def test_autotune_composes_with_user_flags(clean_env):
     assert CONSTANT_FOLDING in flags
     assert AUTOTUNE_OFF in flags
     assert TRITON_OFF in flags
+
+
+def test_x64_explicit_false_respected(clean_env):
+    clean_env.setenv("JAX_ENABLE_X64", "False")
+    reload_wrapper()
+    assert os.environ["JAX_ENABLE_X64"] == "False"
+
+
+def test_x64_explicit_one_left_alone(clean_env):
+    clean_env.setenv("JAX_ENABLE_X64", "1")
+    reload_wrapper()
+    assert os.environ["JAX_ENABLE_X64"] == "1"
+
+
+# --- subprocess import tests: PYAUTO_SETUP and JAX_ENABLE_X64 -----------------
+
+SETUP_VARS = (
+    "PYAUTO_SETUP",
+    "JAX_PLATFORMS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMBA_NUM_THREADS",
+    "JAX_ENABLE_X64",
+    "SLURM_CPUS_PER_TASK",
+)
+THREAD_VARS = SETUP_VARS[2:6]
+
+
+def _run(code, **env_overrides):
+    """Run ``code`` in a fresh interpreter with a controlled environment.
+
+    ``-S`` skips the ``site`` module, so no ``.pth`` hook or ``sitecustomize`` in
+    the venv can set JAX_PLATFORMS / *_NUM_THREADS / JAX_ENABLE_X64 behind the
+    test's back; this process's ``sys.path`` is passed on instead so the same
+    packages import.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in SETUP_VARS}
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    env.update(env_overrides)
+    return subprocess.run(
+        [sys.executable, "-S", "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+
+def _env_after_import(**env_overrides):
+    code = (
+        "import json, os, autonerves; "
+        f"print(json.dumps({{k: os.environ.get(k) for k in {list(SETUP_VARS)!r}}}))"
+    )
+    result = _run(code, **env_overrides)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.parametrize("value", ["cpu", "numba_cpu_sparse_fp64", "jax_cpu_dense_fp64_nufft"])
+def test_setup_cpu_sets_platform_and_threads(value):
+    env = _env_after_import(PYAUTO_SETUP=value, SLURM_CPUS_PER_TASK="3")
+    assert env["JAX_PLATFORMS"] == "cpu"
+    for key in THREAD_VARS:
+        assert env[key] == "3", key
+
+
+def test_setup_cpu_never_overwrites_user_values():
+    env = _env_after_import(
+        PYAUTO_SETUP="cpu",
+        SLURM_CPUS_PER_TASK="3",
+        OMP_NUM_THREADS="1",
+        JAX_PLATFORMS="cuda,cpu",
+    )
+    assert env["OMP_NUM_THREADS"] == "1"
+    assert env["JAX_PLATFORMS"] == "cuda,cpu"
+    assert env["MKL_NUM_THREADS"] == "3"
+
+
+@pytest.mark.parametrize("value", [None, "", "auto", "gpu", "jax_gpu_dense_fp64"])
+def test_setup_auto_gpu_and_unset_set_nothing(value):
+    overrides = {} if value is None else {"PYAUTO_SETUP": value}
+    env = _env_after_import(**overrides)
+    assert env["JAX_PLATFORMS"] is None
+    for key in THREAD_VARS:
+        assert env[key] is None, key
+
+
+def test_setup_invalid_raises_at_import():
+    result = _run("import autonerves", PYAUTO_SETUP="tpu_turbo")
+    assert result.returncode != 0
+    assert "ValueError" in result.stderr
+    assert "PYAUTO_SETUP" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("False", False), ("0", False), ("false", False), (None, True), ("True", True), ("1", True)],
+)
+def test_x64_respected_by_jax(value, expected):
+    pytest.importorskip("jax")
+    overrides = {"JAX_PLATFORMS": "cpu"}
+    if value is not None:
+        overrides["JAX_ENABLE_X64"] = value
+    result = _run(
+        "import autonerves, jax; print(jax.config.read('jax_enable_x64'))", **overrides
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == str(expected)
