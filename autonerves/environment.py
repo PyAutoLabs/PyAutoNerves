@@ -130,6 +130,22 @@ def _package_available(name: str) -> bool:
         return False
 
 
+GPU_PLATFORMS = ("cuda", "rocm", "gpu")
+
+
+def _jax_platforms_exclude_gpu() -> bool:
+    """
+    Whether ``JAX_PLATFORMS`` (or the older ``JAX_PLATFORM_NAME``) restricts JAX to
+    platforms with no GPU, e.g. ``JAX_PLATFORMS=cpu``. Unset or empty means no
+    restriction (``False``).
+    """
+    value = os.environ.get("JAX_PLATFORMS") or os.environ.get("JAX_PLATFORM_NAME") or ""
+    platforms = {p.strip().lower() for p in value.split(",") if p.strip()}
+    if not platforms:
+        return False
+    return not any(p in GPU_PLATFORMS for p in platforms)
+
+
 def detect_gpu(timeout: float = 5.0):
     """
     ``(gpu, gpu_name, gpu_memory_gb)`` for the first GPU this process can see.
@@ -140,6 +156,9 @@ def detect_gpu(timeout: float = 5.0):
       already chosen its platform, so this reflects what JAX will actually use,
       including ``JAX_PLATFORMS=cpu``). The name is the device kind; memory comes
       from ``memory_stats()["bytes_limit"]`` when the backend reports it.
+    - Otherwise, if ``JAX_PLATFORMS`` (or the older ``JAX_PLATFORM_NAME``) is set and
+      names no GPU platform (``cuda``, ``rocm`` or ``gpu``), JAX will not use a GPU
+      even if one is installed, so the answer is ``gpu=False`` without querying it.
     - Otherwise one ``nvidia-smi --query-gpu=name,memory.total`` subprocess runs with
       ``timeout`` seconds. A missing ``nvidia-smi``, a non-zero exit, a timeout or
       empty output all mean ``gpu=False``.
@@ -161,6 +180,9 @@ def detect_gpu(timeout: float = 5.0):
         except Exception:
             pass
         return True, getattr(device, "device_kind", None), memory_gb
+
+    if _jax_platforms_exclude_gpu():
+        return False, None, None
 
     try:
         result = subprocess.run(

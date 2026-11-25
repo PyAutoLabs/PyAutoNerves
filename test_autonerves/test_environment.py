@@ -160,6 +160,8 @@ def test_optional_packages_present(monkeypatch):
 @pytest.fixture
 def no_jax(monkeypatch):
     monkeypatch.delitem(sys.modules, "jax", raising=False)
+    monkeypatch.delenv("JAX_PLATFORMS", raising=False)
+    monkeypatch.delenv("JAX_PLATFORM_NAME", raising=False)
 
 
 def _completed(stdout, returncode=0):
@@ -198,6 +200,35 @@ def test_gpu_nvidia_smi_present(monkeypatch, no_jax):
     assert environment.detect_gpu() == (True, "NVIDIA A100-SXM4-40GB", 40.0)
     assert len(calls) == 1
     assert calls[0][1]["timeout"] > 0
+
+
+@pytest.mark.parametrize(
+    "variable, value",
+    [
+        ("JAX_PLATFORMS", "cpu"),
+        ("JAX_PLATFORMS", "CPU"),
+        ("JAX_PLATFORMS", "cpu,tpu"),
+        ("JAX_PLATFORM_NAME", "cpu"),
+    ],
+)
+def test_gpu_jax_platforms_without_gpu_skips_nvidia_smi(monkeypatch, no_jax, variable, value):
+    def run(*args, **kwargs):
+        raise AssertionError("nvidia-smi must not run when JAX is restricted to CPU")
+
+    monkeypatch.setattr(environment.subprocess, "run", run)
+    monkeypatch.setenv(variable, value)
+    assert environment.detect_gpu() == (False, None, None)
+
+
+@pytest.mark.parametrize("value", ["cuda", "gpu", "cpu,cuda", "rocm", ""])
+def test_gpu_jax_platforms_with_gpu_or_empty_queries_nvidia_smi(monkeypatch, no_jax, value):
+    monkeypatch.setattr(
+        environment.subprocess,
+        "run",
+        lambda *a, **k: _completed("NVIDIA A100-SXM4-40GB, 40960\n"),
+    )
+    monkeypatch.setenv("JAX_PLATFORMS", value)
+    assert environment.detect_gpu() == (True, "NVIDIA A100-SXM4-40GB", 40.0)
 
 
 def test_gpu_via_already_imported_jax(monkeypatch):
